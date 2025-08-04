@@ -30,6 +30,7 @@ OPTIONS:
     --interactive-login    Force interactive UI login instead of API key
     --rebuild             Force rebuild of Docker image
     --clean              Remove existing container and start fresh
+    --danger             Launch Claude CLI with --dangerously-skip-permissions
     --verbose, -v        Enable verbose output
     --help, -h           Show this help message
 
@@ -38,6 +39,7 @@ EXAMPLES:
     $SCRIPT_NAME --interactive-login # Force interactive login
     $SCRIPT_NAME --rebuild          # Force rebuild image and restart
     $SCRIPT_NAME --clean            # Remove container and start fresh
+    $SCRIPT_NAME --danger           # Launch directly into Claude CLI (dangerous!)
 
 EOF
 }
@@ -60,6 +62,7 @@ log_error() {
 REBUILD=false
 CLEAN=false
 INTERACTIVE_LOGIN=false
+DANGER_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -83,6 +86,10 @@ while [[ $# -gt 0 ]]; do
             INTERACTIVE_LOGIN=true
             shift
             ;;
+        --danger)
+            DANGER_MODE=true
+            shift
+            ;;
         *)
             log_error "Unknown option: $1"
             show_usage
@@ -100,6 +107,12 @@ fi
 log_verbose "Docker found: $(docker --version)"
 
 # --- Container Cleanup ---
+# --rebuild implicitly runs --clean
+if [ "$REBUILD" = true ]; then
+    CLEAN=true
+    log_verbose "Rebuild requested, enabling container cleanup"
+fi
+
 if [ "$CLEAN" = true ]; then
     log_info "Cleaning up existing container..."
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -171,7 +184,9 @@ else
         -d
         --name "$CONTAINER_NAME"
         -v "$(pwd):/app"
-        -v "${HOME}/.kube:/root/.kube"
+        -v "${HOME}/.kube:/home/claude/.kube"
+        -v "${HOME}/.claude:/home/claude/.claude"
+        -v "${HOME}/.gitconfig:/home/claude/.gitconfig"
     )
     
     # Handle authentication method
@@ -214,7 +229,43 @@ for i in {1..5}; do
     sleep 1
 done
 
+# --- Sync Claude Configuration ---
+log_verbose "Syncing Claude CLI configuration..."
+if command -v claude &> /dev/null; then
+    # Get host configuration values
+    HOST_TRUST=$(claude config get hasTrustDialogAccepted 2>/dev/null || echo "false")
+    HOST_ONBOARDING=$(claude config get hasCompletedProjectOnboarding 2>/dev/null || echo "false")
+    
+    if [ "$HOST_TRUST" = "true" ]; then
+        log_verbose "Bypassing Claude CLI config by pre-accepting trust dialog"
+        # Create a wrapper script that bypasses the config dialog
+        docker exec --user claude "$CONTAINER_NAME" sh -c 'cat > /tmp/claude-bypass << "EOF"
+#!/bin/bash
+# Temporarily set environment to bypass trust dialog
+export CLAUDE_SKIP_TRUST_DIALOG=1
+export CLAUDE_TRUST_ACCEPTED=true
+exec claude "$@"
+EOF
+chmod +x /tmp/claude-bypass' &> /dev/null || true
+    fi
+else
+    log_verbose "Claude CLI not found on host, skipping config sync"
+fi
+
 # --- Attach to the Container ---
 # By this point, the container is guaranteed to be running.
-log_verbose "Connecting to container with: docker exec -it $CONTAINER_NAME /bin/bash"
-docker exec -it "$CONTAINER_NAME" /bin/bash
+if [ "$DANGER_MODE" = true ]; then
+    log_info "⚠️  DANGER MODE: Launching Claude CLI with --dangerously-skip-permissions"
+    log_verbose "Connecting directly to Claude CLI with bypassed permissions"
+    # Use bypass script if trust dialog was accepted on host
+    if [ "$HOST_TRUST" = "true" ] 2>/dev/null; then
+        log_verbose "Using config bypass script"
+        docker exec -it --user claude "$CONTAINER_NAME" /tmp/claude-bypass --dangerously-skip-permissions
+    else
+        docker exec -it --user claude "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    fi
+else
+    # Use bash-with-prompt to ensure git-aware-prompt loads properly
+    log_verbose "Connecting to container with git-aware prompt enabled"
+    docker exec -it --user claude "$CONTAINER_NAME" bash-with-prompt
+fi

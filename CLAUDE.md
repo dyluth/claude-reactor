@@ -45,11 +45,11 @@ The project supports two authentication approaches:
 # Build image
 docker build -t claude-runner .
 
-# Run with API key
-docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" --env-file ~/.env claude-runner
+# Run with API key and persistent configs
+docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" -v "${HOME}/.claude:/root/.claude" -v "${HOME}/.gitconfig:/root/.gitconfig" --env-file ~/.env claude-runner
 
-# Run for interactive login
-docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" claude-runner
+# Run for interactive login with persistent configs
+docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" -v "${HOME}/.claude:/root/.claude" -v "${HOME}/.gitconfig:/root/.gitconfig" claude-runner
 
 # Connect to container
 docker exec -it claude-agent /bin/bash
@@ -58,6 +58,7 @@ docker exec -it claude-agent /bin/bash
 **VS Code Dev Containers approach:**
 - Use "Reopen in Container" functionality
 - Automatic environment setup with extensions
+- Claude authentication and git config persist between container restarts via mounted directories
 
 ## Important Notes
 

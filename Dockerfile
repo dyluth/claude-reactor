@@ -27,6 +27,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
+# Install Docker CLI (for connecting to host Docker daemon)
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bullseye stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && apt-get install -y docker-ce-cli && rm -rf /var/lib/apt/lists/*
+
 # --- Install Node.js and Claude CLI ---
 # Set environment variables for nvm
 ENV NVM_DIR=/usr/local/nvm
@@ -48,12 +53,38 @@ RUN . "$NVM_DIR/nvm.sh" && \
 ENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
 
 # --- Configure git-aware-prompt ---
+# Add to both .bashrc and .bash_profile to ensure it loads in all contexts
 RUN echo 'export GITAWAREPROMPT=/usr/local/git-aware-prompt' >> /root/.bashrc && \
     echo 'source "${GITAWAREPROMPT}/main.sh"' >> /root/.bashrc && \
-    echo 'export PS1="\u@\h \W \[\$txtcyn\]\$git_branch\[\$txtred\]\$git_dirty\[\$txtrst\]\$ "' >> /root/.bashrc
+    echo 'export PS1="\u@\h \W \[\$txtcyn\]\$git_branch\[\$txtred\]\$git_dirty\[\$txtrst\]\$ "' >> /root/.bashrc && \
+    cp /root/.bashrc /root/.bash_profile
+
+# Create a script to ensure git-aware-prompt is always available for claude user
+RUN echo '#!/bin/bash' > /usr/local/bin/bash-with-prompt && \
+    echo 'export GITAWAREPROMPT=/usr/local/git-aware-prompt' >> /usr/local/bin/bash-with-prompt && \
+    echo 'source "${GITAWAREPROMPT}/main.sh"' >> /usr/local/bin/bash-with-prompt && \
+    echo 'export PS1="\u@\h \W \[\$txtcyn\]\$git_branch\[\$txtred\]\$git_dirty\[\$txtrst\]\$ "' >> /usr/local/bin/bash-with-prompt && \
+    echo 'exec bash "$@"' >> /usr/local/bin/bash-with-prompt && \
+    chmod +x /usr/local/bin/bash-with-prompt
+
+# Create a non-root user for Claude CLI (required for --dangerously-skip-permissions)
+RUN useradd -m -s /bin/bash claude && \
+    usermod -aG sudo claude && \
+    echo 'claude ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Copy bashrc configuration to the claude user
+RUN cp /root/.bashrc /home/claude/.bashrc && \
+    cp /root/.bash_profile /home/claude/.bash_profile && \
+    chown claude:claude /home/claude/.bashrc /home/claude/.bash_profile
 
 # Set the working directory for when we connect to the container
 WORKDIR /app
+
+# Change ownership of the app directory to claude user
+RUN chown -R claude:claude /app
+
+# Switch to non-root user
+USER claude
 
 # This command will be executed when the container starts.
 # It keeps the container running so we can connect to it.
