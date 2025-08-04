@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # claude-reactor: A wrapper script to manage and connect to the interactive Claude Docker environment.
 #
@@ -11,31 +11,137 @@
 
 set -e
 
+# --- Script Variables ---
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+VERBOSE=false
+
 # --- Configuration ---
 IMAGE_NAME="claude-runner"
 CONTAINER_NAME="claude-agent"
 
+# --- Helper Functions ---
+show_usage() {
+    cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS]
+
+A wrapper script to manage and connect to the interactive Claude Docker environment.
+
+OPTIONS:
+    --interactive-login    Force interactive UI login instead of API key
+    --rebuild             Force rebuild of Docker image
+    --clean              Remove existing container and start fresh
+    --verbose, -v        Enable verbose output
+    --help, -h           Show this help message
+
+EXAMPLES:
+    $SCRIPT_NAME                    # Start/connect to container with API key auth
+    $SCRIPT_NAME --interactive-login # Force interactive login
+    $SCRIPT_NAME --rebuild          # Force rebuild image and restart
+    $SCRIPT_NAME --clean            # Remove container and start fresh
+
+EOF
+}
+
+log_verbose() {
+    if [ "$VERBOSE" = true ]; then
+        echo "[VERBOSE] $1"
+    fi
+}
+
+log_info() {
+    echo "$1"
+}
+
+log_error() {
+    echo "Error: $1" >&2
+}
+
+# --- Argument Parsing ---
+REBUILD=false
+CLEAN=false
+INTERACTIVE_LOGIN=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        --verbose|-v)
+            VERBOSE=true
+            shift
+            ;;
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
+        --clean)
+            CLEAN=true
+            shift
+            ;;
+        --interactive-login)
+            INTERACTIVE_LOGIN=true
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
 # --- Dependency Check ---
 if ! command -v docker &> /dev/null; then
-    echo "Error: Docker is not installed or not in your PATH. Please install Docker Desktop."
+    log_error "Docker is not installed or not in your PATH. Please install Docker Desktop."
     exit 1
 fi
 
+log_verbose "Docker found: $(docker --version)"
+
+# --- Container Cleanup ---
+if [ "$CLEAN" = true ]; then
+    log_info "Cleaning up existing container..."
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_verbose "Stopping container $CONTAINER_NAME"
+        docker stop "$CONTAINER_NAME" &> /dev/null || true
+        log_verbose "Removing container $CONTAINER_NAME"
+        docker rm "$CONTAINER_NAME" &> /dev/null || true
+        log_info "Container $CONTAINER_NAME removed."
+    else
+        log_verbose "No existing container to clean up."
+    fi
+fi
+
 # --- Image Build Check ---
-# If the image doesn't exist, we must be in the project directory to build it.
-if ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
-    echo "Docker image '$IMAGE_NAME' not found."
+# If the image doesn't exist or rebuild is requested, build it
+if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
+    if [ "$REBUILD" = true ]; then
+        log_info "Rebuilding Docker image '$IMAGE_NAME'..."
+        log_verbose "Removing existing image"
+        docker rmi "$IMAGE_NAME" &> /dev/null || true
+    else
+        log_info "Docker image '$IMAGE_NAME' not found."
+    fi
+    
     if [ -f "Dockerfile" ]; then
-        echo "Dockerfile found in current directory. Building the image..."
-        docker build -t "$IMAGE_NAME" .
+        log_info "Dockerfile found in current directory. Building the image..."
+        if [ "$VERBOSE" = true ]; then
+            docker build -t "$IMAGE_NAME" .
+        else
+            docker build -t "$IMAGE_NAME" . > /dev/null
+        fi
         if [ $? -ne 0 ]; then
-            echo "Error: Docker build failed."
+            log_error "Docker build failed."
             exit 1
         fi
+        log_info "Image '$IMAGE_NAME' built successfully."
     else
-        echo "Error: Dockerfile not found. Please run 'claude-shell' from the project root once to build the image."
+        log_error "Dockerfile not found. Please run '$SCRIPT_NAME' from the project root once to build the image."
         exit 1
     fi
+else
+    log_verbose "Docker image '$IMAGE_NAME' already exists."
 fi
 
 # --- Container Lifecycle Management ---
@@ -43,15 +149,22 @@ fi
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     # Container exists. Check if it's running.
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "Attaching to running container '${CONTAINER_NAME}'..."
+        log_info "Attaching to running container '${CONTAINER_NAME}'..."
+        log_verbose "Container is already running"
     else
         # Container is stopped, so start it.
-        echo "Starting stopped container '${CONTAINER_NAME}'..."
+        log_info "Starting stopped container '${CONTAINER_NAME}'..."
+        log_verbose "Starting container $CONTAINER_NAME"
         docker start "$CONTAINER_NAME" > /dev/null
+        if [ $? -ne 0 ]; then
+            log_error "Failed to start container."
+            exit 1
+        fi
+        log_verbose "Container started successfully"
     fi
 else
     # Container does not exist. Create and run it for the first time.
-    echo "Creating and starting new container '${CONTAINER_NAME}'..."
+    log_info "Creating and starting new container '${CONTAINER_NAME}'..."
     
     # Base arguments for the docker run command
     DOCKER_RUN_ARGS=(
@@ -62,24 +175,46 @@ else
     )
     
     # Handle authentication method
-    if [[ " $@ " =~ " --interactive-login " ]]; then
-        echo "Forcing interactive UI login."
+    if [ "$INTERACTIVE_LOGIN" = true ]; then
+        log_info "Using interactive UI login (--interactive-login specified)."
+        log_verbose "Skipping API key authentication"
     elif [ -f "${HOME}/.env" ]; then
-        echo "API key file found at ~/.env. Using API key authentication."
+        log_info "API key file found at ~/.env. Using API key authentication."
         DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
+        log_verbose "Added --env-file ${HOME}/.env to docker run args"
     else
-        echo "No API key file found at ~/.env. Defaulting to interactive UI login."
+        log_info "No API key file found at ~/.env. Using interactive UI login."
+        log_verbose "Create ~/.env with ANTHROPIC_API_KEY to use API key authentication"
     fi
+    
+    log_verbose "Docker run command: docker run ${DOCKER_RUN_ARGS[*]} $IMAGE_NAME"
     
     # Execute the run command
     docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME" > /dev/null
     
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to run container."
+        log_error "Failed to run container."
         exit 1
     fi
+    log_verbose "Container created and started successfully"
 fi
+
+# --- Container Health Check ---
+log_verbose "Checking container health..."
+for i in {1..5}; do
+    if docker exec "$CONTAINER_NAME" echo "Container is responsive" &> /dev/null; then
+        log_verbose "Container health check passed"
+        break
+    fi
+    if [ $i -eq 5 ]; then
+        log_error "Container is not responding after 5 attempts."
+        exit 1
+    fi
+    log_verbose "Container health check attempt $i failed, retrying..."
+    sleep 1
+done
 
 # --- Attach to the Container ---
 # By this point, the container is guaranteed to be running.
+log_verbose "Connecting to container with: docker exec -it $CONTAINER_NAME /bin/bash"
 docker exec -it "$CONTAINER_NAME" /bin/bash

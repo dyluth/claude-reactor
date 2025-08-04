@@ -2,15 +2,30 @@
 # It's a good neutral base for installing development tools like nvm.
 FROM debian:bullseye-slim
 
-# Install dependencies required for nvm, kubectl, and general development
-RUN apt-get update && apt-get install -y curl git ca-certificates && rm -rf /var/lib/apt/lists/*
+# Install comprehensive development dependencies for Claude CLI
+RUN apt-get update && apt-get install -y \
+    # Core system tools
+    curl git ca-certificates wget unzip gnupg2 \
+    # Essential CLI tools for Claude
+    ripgrep jq fzf nano vim less procps htop \
+    # Build tools and compilers
+    build-essential python3 python3-pip \
+    # Shell and process tools
+    shellcheck man-db \
+    && rm -rf /var/lib/apt/lists/*
 
 # --- Install git-aware-prompt ---
 RUN git clone https://github.com/jimeh/git-aware-prompt.git /usr/local/git-aware-prompt
 
-# --- Install kubectl ---
+# --- Install kubectl and GitHub CLI ---
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl" && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+    apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
 # --- Install Node.js and Claude CLI ---
 # Set environment variables for nvm
@@ -21,13 +36,13 @@ ENV NODE_VERSION=22.17.0
 RUN mkdir -p $NVM_DIR && \
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 
-# Activate nvm and install Node.js, then the Claude CLI
+# Activate nvm and install Node.js, then the Claude CLI and essential Node.js tools
 # We do this in a single RUN command to ensure it all happens in the same shell context.
 RUN . "$NVM_DIR/nvm.sh" && \
     nvm install $NODE_VERSION && \
     nvm use $NODE_VERSION && \
     nvm alias default $NODE_VERSION && \
-    npm install -g @anthropic-ai/claude-code
+    npm install -g @anthropic-ai/claude-code typescript ts-node eslint prettier
 
 # Add the nvm-installed node and npm to the PATH for all future shell sessions
 ENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
