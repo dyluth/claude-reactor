@@ -1,0 +1,20 @@
+{
+	"name": "Claude Interactive Environment",
+	"dockerFile": "../Dockerfile",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"dbaeumer.vscode-eslint",
+				"ms-kubernetes-tools.vscode-kubernetes-tools"
+			]
+		}
+	},
+	"runArgs": [
+		"--env-file",
+		"${localEnv:HOME}/.env"
+	],
+	"mounts": [
+		"source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,consistency=cached"
+	]
+}
