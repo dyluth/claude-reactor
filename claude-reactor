@@ -16,8 +16,9 @@ SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 VERBOSE=false
 
 # --- Configuration ---
-IMAGE_NAME="claude-runner"
-CONTAINER_NAME="claude-agent"
+BASE_IMAGE_NAME="claude-runner"
+BASE_CONTAINER_NAME="claude-agent"
+CONFIG_FILE=".claude-reactor"
 
 # --- Helper Functions ---
 show_usage() {
@@ -27,19 +28,27 @@ Usage: $SCRIPT_NAME [OPTIONS]
 A wrapper script to manage and connect to the interactive Claude Docker environment.
 
 OPTIONS:
-    --interactive-login    Force interactive UI login instead of API key
+    --variant VARIANT     Set container variant (base, go, full, cloud, k8s)
+    --list-variants       Show available variants
+    --show-config         Show current configuration
+    --interactive-login   Force interactive UI login instead of API key
     --rebuild             Force rebuild of Docker image
-    --clean              Remove existing container and start fresh
-    --danger             Launch Claude CLI with --dangerously-skip-permissions
-    --verbose, -v        Enable verbose output
-    --help, -h           Show this help message
+    --clean               Remove existing container and start fresh
+    --danger              Launch Claude CLI with --dangerously-skip-permissions
+    --install             Install claude-reactor to /usr/local/bin (requires sudo)
+    --uninstall           Remove claude-reactor from /usr/local/bin (requires sudo)
+    --verbose, -v         Enable verbose output
+    --help, -h            Show this help message
 
 EXAMPLES:
-    $SCRIPT_NAME                    # Start/connect to container with API key auth
-    $SCRIPT_NAME --interactive-login # Force interactive login
-    $SCRIPT_NAME --rebuild          # Force rebuild image and restart
-    $SCRIPT_NAME --clean            # Remove container and start fresh
-    $SCRIPT_NAME --danger           # Launch directly into Claude CLI (dangerous!)
+    $SCRIPT_NAME                         # Use saved variant or auto-detect
+    $SCRIPT_NAME --variant go            # Use Go variant and save preference
+    $SCRIPT_NAME --variant full --danger # Use full variant with danger mode
+    $SCRIPT_NAME --list-variants         # Show available variants
+    $SCRIPT_NAME --show-config           # Show current configuration
+    $SCRIPT_NAME --rebuild               # Force rebuild current variant
+    $SCRIPT_NAME --clean                 # Remove container and start fresh
+    $SCRIPT_NAME --install               # Install to PATH
 
 EOF
 }
@@ -58,17 +67,160 @@ log_error() {
     echo "Error: $1" >&2
 }
 
+# --- Configuration Functions ---
+save_config() {
+    local variant="$1"
+    local danger_mode="$2"
+    
+    {
+        echo "variant=$variant"
+        if [ "$danger_mode" = true ]; then
+            echo "danger=true"
+        fi
+    } > "$CONFIG_FILE"
+    
+    log_verbose "Saved configuration: variant=$variant, danger=$danger_mode"
+}
+
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        log_verbose "Loading configuration from $CONFIG_FILE"
+        
+        # Load variant
+        SAVED_VARIANT=$(grep "^variant=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        
+        # Load danger setting
+        SAVED_DANGER=$(grep "^danger=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$SAVED_DANGER" = "true" ]; then
+            SAVED_DANGER=true
+        else
+            SAVED_DANGER=false
+        fi
+        
+        log_verbose "Loaded: variant=$SAVED_VARIANT, danger=$SAVED_DANGER"
+    else
+        log_verbose "No configuration file found"
+        SAVED_VARIANT=""
+        SAVED_DANGER=false
+    fi
+}
+
+auto_detect_variant() {
+    log_verbose "Auto-detecting project variant..."
+    
+    if [ -f "go.mod" ] || [ -f "go.sum" ]; then
+        echo "go"
+    elif [ -f "Cargo.toml" ] || [ -f "Cargo.lock" ]; then
+        echo "full"  # Rust needs full environment
+    elif [ -f "pom.xml" ] || [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+        echo "full"  # Java needs full environment
+    elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "Pipfile" ]; then
+        echo "base"  # Python already in base
+    elif [ -f "package.json" ]; then
+        echo "base"  # Node.js already in base
+    else
+        echo "base"  # Default fallback
+    fi
+}
+
+determine_variant() {
+    if [ -n "$EXPLICIT_VARIANT" ]; then
+        echo "$EXPLICIT_VARIANT"
+    elif [ -n "$SAVED_VARIANT" ]; then
+        log_verbose "Using saved variant: $SAVED_VARIANT"
+        echo "$SAVED_VARIANT"
+    else
+        local detected=$(auto_detect_variant)
+        log_verbose "Auto-detected variant: $detected"
+        echo "$detected"
+    fi
+}
+
+validate_variant() {
+    local variant="$1"
+    case "$variant" in
+        base|go|full|cloud|k8s)
+            return 0
+            ;;
+        *)
+            log_error "Invalid variant: $variant"
+            log_error "Available variants: base, go, full, cloud, k8s"
+            return 1
+            ;;
+    esac
+}
+
+show_variants() {
+    cat << EOF
+Available container variants:
+
+  base   - Node.js, Python, basic development tools (smallest)
+  go     - Base + Go toolchain and utilities
+  full   - Go + Rust, Java, database clients
+  cloud  - Full + AWS/GCP/Azure CLIs
+  k8s    - Full + Enhanced Kubernetes tools (helm, k9s)
+
+Current configuration:
+EOF
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" | sed 's/^/  /'
+    else
+        echo "  No saved configuration (will auto-detect)"
+    fi
+}
+
+show_current_config() {
+    load_config
+    local variant=$(determine_variant)
+    
+    echo "Current configuration:"
+    echo "  Variant: $variant"
+    echo "  Danger mode: ${SAVED_DANGER:-false}"
+    echo "  Config file: $CONFIG_FILE"
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "  Status: Configuration saved"
+        echo ""
+        echo "Raw config file:"
+        cat "$CONFIG_FILE" | sed 's/^/    /'
+    else
+        echo "  Status: No saved configuration (auto-detecting)"
+        echo "  Auto-detected: $(auto_detect_variant)"
+    fi
+}
+
 # --- Argument Parsing ---
 REBUILD=false
 CLEAN=false
 INTERACTIVE_LOGIN=false
 DANGER_MODE=false
+INSTALL=false
+UNINSTALL=false
+EXPLICIT_VARIANT=""
+SHOW_VARIANTS=false
+SHOW_CONFIG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
             show_usage
             exit 0
+            ;;
+        --variant)
+            if [[ -z "$2" ]]; then
+                log_error "--variant requires a value"
+                exit 1
+            fi
+            EXPLICIT_VARIANT="$2"
+            shift 2
+            ;;
+        --list-variants)
+            SHOW_VARIANTS=true
+            shift
+            ;;
+        --show-config)
+            SHOW_CONFIG=true
+            shift
             ;;
         --verbose|-v)
             VERBOSE=true
@@ -90,6 +242,14 @@ while [[ $# -gt 0 ]]; do
             DANGER_MODE=true
             shift
             ;;
+        --install)
+            INSTALL=true
+            shift
+            ;;
+        --uninstall)
+            UNINSTALL=true
+            shift
+            ;;
         *)
             log_error "Unknown option: $1"
             show_usage
@@ -98,6 +258,75 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Handle Special Commands ---
+if [ "$SHOW_VARIANTS" = true ]; then
+    show_variants
+    exit 0
+fi
+
+if [ "$SHOW_CONFIG" = true ]; then
+    show_current_config
+    exit 0
+fi
+
+# --- Load Configuration ---
+load_config
+
+# --- Validate Explicit Variant ---
+if [ -n "$EXPLICIT_VARIANT" ]; then
+    if ! validate_variant "$EXPLICIT_VARIANT"; then
+        exit 1
+    fi
+fi
+
+# --- Install/Uninstall Handling ---
+if [ "$INSTALL" = true ]; then
+    log_info "Installing claude-reactor to /usr/local/bin..."
+    
+    # Get the absolute path of this script
+    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    
+    # Check if we have sudo access
+    if ! sudo -n true 2>/dev/null; then
+        log_info "Requesting sudo access to install to /usr/local/bin..."
+    fi
+    
+    # Copy script to /usr/local/bin
+    if sudo cp "$SCRIPT_PATH" /usr/local/bin/claude-reactor; then
+        sudo chmod +x /usr/local/bin/claude-reactor
+        log_info "✅ claude-reactor installed successfully!"
+        log_info "You can now run 'claude-reactor' from anywhere."
+        exit 0
+    else
+        log_error "Failed to install claude-reactor."
+        exit 1
+    fi
+fi
+
+if [ "$UNINSTALL" = true ]; then
+    log_info "Removing claude-reactor from /usr/local/bin..."
+    
+    # Check if the file exists
+    if [ ! -f "/usr/local/bin/claude-reactor" ]; then
+        log_error "claude-reactor is not installed in /usr/local/bin"
+        exit 1
+    fi
+    
+    # Check if we have sudo access
+    if ! sudo -n true 2>/dev/null; then
+        log_info "Requesting sudo access to remove from /usr/local/bin..."
+    fi
+    
+    # Remove the script
+    if sudo rm /usr/local/bin/claude-reactor; then
+        log_info "✅ claude-reactor uninstalled successfully!"
+        exit 0
+    else
+        log_error "Failed to uninstall claude-reactor."
+        exit 1
+    fi
+fi
+
 # --- Dependency Check ---
 if ! command -v docker &> /dev/null; then
     log_error "Docker is not installed or not in your PATH. Please install Docker Desktop."
@@ -105,6 +334,26 @@ if ! command -v docker &> /dev/null; then
 fi
 
 log_verbose "Docker found: $(docker --version)"
+
+# --- Determine Variant and Names ---
+VARIANT=$(determine_variant)
+IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT"
+CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT"
+
+log_verbose "Using variant: $VARIANT"
+log_verbose "Image name: $IMAGE_NAME"
+log_verbose "Container name: $CONTAINER_NAME"
+
+# --- Apply Saved Danger Mode ---
+if [ "$SAVED_DANGER" = true ] && [ "$DANGER_MODE" = false ]; then
+    log_verbose "Applying saved danger mode setting"
+    DANGER_MODE=true
+fi
+
+# --- Save Configuration if Explicit Options Were Provided ---
+if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ]; then
+    save_config "$VARIANT" "$DANGER_MODE"
+fi
 
 # --- Container Cleanup ---
 # --rebuild implicitly runs --clean
@@ -139,16 +388,18 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; t
     
     if [ -f "Dockerfile" ]; then
         log_info "Dockerfile found in current directory. Building the image..."
+        log_info "Building variant: $VARIANT"
         if [ "$VERBOSE" = true ]; then
-            docker build -t "$IMAGE_NAME" .
+            docker build --target "$VARIANT" -t "$IMAGE_NAME" .
         else
-            docker build -t "$IMAGE_NAME" . > /dev/null
+            docker build --target "$VARIANT" -t "$IMAGE_NAME" . > /dev/null
         fi
         if [ $? -ne 0 ]; then
-            log_error "Docker build failed."
+            log_error "Docker build failed for variant '$VARIANT'."
+            log_error "Make sure the Dockerfile has a '$VARIANT' build stage."
             exit 1
         fi
-        log_info "Image '$IMAGE_NAME' built successfully."
+        log_info "Image '$IMAGE_NAME' (variant: $VARIANT) built successfully."
     else
         log_error "Dockerfile not found. Please run '$SCRIPT_NAME' from the project root once to build the image."
         exit 1

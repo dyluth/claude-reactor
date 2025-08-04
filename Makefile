@@ -1,0 +1,349 @@
+# Claude-Reactor Makefile
+# Comprehensive build and test automation for the Docker containerization system
+
+# Configuration
+DOCKER_REGISTRY ?= 
+IMAGE_PREFIX ?= claude-runner
+VARIANTS = base go full cloud k8s
+PROJECT_NAME = claude-reactor
+
+# Build settings
+DOCKER_BUILD_ARGS ?= --no-cache=false
+DOCKER_PLATFORM ?= linux/arm64
+BUILD_DATE = $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+GIT_COMMIT = $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION ?= latest
+
+# Colors for output
+BLUE = \033[0;34m
+GREEN = \033[0;32m
+YELLOW = \033[1;33m
+RED = \033[0;31m
+NC = \033[0m # No Color
+
+# Default target
+.DEFAULT_GOAL := help
+
+##@ General
+
+.PHONY: help
+help: ## Display this help message
+	@echo "$(BLUE)Claude-Reactor Build System$(NC)"
+	@echo ""
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make $(YELLOW)<target>$(NC)\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  $(BLUE)%-15s$(NC) %s\n", $$1, $$2 } /^##@/ { printf "\n$(GREEN)%s$(NC)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "$(YELLOW)Typical Workflows:$(NC)"
+	@echo "  $(BLUE)Development:$(NC)"
+	@echo "    make run              # Start container (auto-detects variant)"
+	@echo "    make config           # Check current configuration"
+	@echo "    make run-go           # Force Go variant"
+	@echo ""
+	@echo "  $(BLUE)Testing:$(NC)"
+	@echo "    make test             # Run complete test suite"
+	@echo "    make demo             # Interactive feature demo"
+	@echo "    make test-unit        # Quick unit tests only"
+	@echo ""
+	@echo "  $(BLUE)Building:$(NC)"
+	@echo "    make build-all        # Build core variants"
+	@echo "    make build-extended   # Build all variants"
+	@echo ""
+	@echo "  $(BLUE)Maintenance:$(NC)"
+	@echo "    make clean-all        # Complete cleanup"
+	@echo "    make benchmark        # Container size analysis"
+
+.PHONY: info
+info: ## Show project information
+	@echo "$(BLUE)Project Information:$(NC)"
+	@echo "  Name:           $(PROJECT_NAME)"
+	@echo "  Version:        $(VERSION)"
+	@echo "  Git Commit:     $(GIT_COMMIT)"
+	@echo "  Build Date:     $(BUILD_DATE)"
+	@echo "  Docker Platform: $(DOCKER_PLATFORM)"
+	@echo "  Variants:       $(VARIANTS)"
+	@echo ""
+
+##@ Container Building
+
+.PHONY: build-base
+build-base: ## Build base container variant
+	@echo "$(BLUE)Building base variant...$(NC)"
+	docker build $(DOCKER_BUILD_ARGS) \
+		--platform $(DOCKER_PLATFORM) \
+		--target base \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		-t $(IMAGE_PREFIX)-base:$(VERSION) \
+		-t $(IMAGE_PREFIX)-base:latest .
+	@echo "$(GREEN)✓ Base variant built successfully$(NC)"
+
+.PHONY: build-go
+build-go: ## Build Go container variant
+	@echo "$(BLUE)Building Go variant...$(NC)"
+	docker build $(DOCKER_BUILD_ARGS) \
+		--platform $(DOCKER_PLATFORM) \
+		--target go \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		-t $(IMAGE_PREFIX)-go:$(VERSION) \
+		-t $(IMAGE_PREFIX)-go:latest .
+	@echo "$(GREEN)✓ Go variant built successfully$(NC)"
+
+.PHONY: build-full
+build-full: ## Build full container variant (Go + Rust + Java + DBs)
+	@echo "$(BLUE)Building full variant...$(NC)"
+	docker build $(DOCKER_BUILD_ARGS) \
+		--platform $(DOCKER_PLATFORM) \
+		--target full \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		-t $(IMAGE_PREFIX)-full:$(VERSION) \
+		-t $(IMAGE_PREFIX)-full:latest .
+	@echo "$(GREEN)✓ Full variant built successfully$(NC)"
+
+.PHONY: build-cloud
+build-cloud: ## Build cloud container variant (Full + cloud CLIs)
+	@echo "$(BLUE)Building cloud variant...$(NC)"
+	docker build $(DOCKER_BUILD_ARGS) \
+		--platform $(DOCKER_PLATFORM) \
+		--target cloud \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		-t $(IMAGE_PREFIX)-cloud:$(VERSION) \
+		-t $(IMAGE_PREFIX)-cloud:latest .
+	@echo "$(GREEN)✓ Cloud variant built successfully$(NC)"
+
+.PHONY: build-k8s
+build-k8s: ## Build Kubernetes container variant (Full + K8s tools)
+	@echo "$(BLUE)Building Kubernetes variant...$(NC)"
+	docker build $(DOCKER_BUILD_ARGS) \
+		--platform $(DOCKER_PLATFORM) \
+		--target k8s \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		-t $(IMAGE_PREFIX)-k8s:$(VERSION) \
+		-t $(IMAGE_PREFIX)-k8s:latest .
+	@echo "$(GREEN)✓ Kubernetes variant built successfully$(NC)"
+
+.PHONY: build-all
+build-all: build-base build-go build-full ## Build core container variants (base, go, full)
+	@echo "$(GREEN)✓ All core variants built successfully$(NC)"
+
+.PHONY: build-extended
+build-extended: build-all build-cloud build-k8s ## Build all container variants including cloud and k8s
+	@echo "$(GREEN)✓ All variants built successfully$(NC)"
+
+##@ Testing
+
+.PHONY: test-unit
+test-unit: ## Run unit tests (fast)
+	@echo "$(BLUE)Running unit tests...$(NC)"
+	@./tests/test-runner.sh --unit
+	@echo "$(GREEN)✓ Unit tests completed$(NC)"
+
+.PHONY: test-integration
+test-integration: ## Run integration tests (requires Docker)
+	@echo "$(BLUE)Running integration tests...$(NC)"
+	@./tests/test-runner.sh --integration && echo "$(GREEN)✓ Integration tests completed$(NC)"
+
+.PHONY: test-integration-quick
+test-integration-quick: ## Run integration tests without Docker builds
+	@echo "$(BLUE)Running integration tests (quick mode)...$(NC)"
+	@./tests/test-runner.sh --integration --quick && echo "$(GREEN)✓ Quick integration tests completed$(NC)"
+
+.PHONY: test
+test: test-unit test-integration-quick ## Run complete test suite (unit + quick integration)
+	@echo "$(GREEN)✓ Complete test suite passed$(NC)"
+
+.PHONY: test-full
+test-full: build-all test-unit test-integration ## Build containers and run full test suite
+	@echo "$(GREEN)✓ Full test suite with builds completed$(NC)"
+
+.PHONY: demo
+demo: ## Run interactive feature demonstration
+	@echo "$(BLUE)Starting interactive demo...$(NC)"
+	./tests/demo.sh
+
+.PHONY: demo-auto
+demo-auto: ## Run automated feature demonstration
+	@echo "$(BLUE)Running automated demo...$(NC)"
+	./tests/demo.sh --auto
+
+.PHONY: demo-quick
+demo-quick: ## Run quick demo without Docker builds
+	@echo "$(BLUE)Running quick demo...$(NC)"
+	@./tests/demo.sh --quick --auto && echo "$(GREEN)✓ Demo completed$(NC)"
+
+##@ Development
+
+.PHONY: dev-setup
+dev-setup: ## Set up development environment
+	@echo "$(BLUE)Setting up development environment...$(NC)"
+	@chmod +x claude-reactor
+	@chmod +x tests/*.sh
+	@chmod +x tests/*/*.sh
+	@echo "$(GREEN)✓ Development environment ready$(NC)"
+
+.PHONY: lint
+lint: ## Run shell script linting (requires shellcheck)
+	@echo "$(BLUE)Running shell script linting...$(NC)"
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		find . -name "*.sh" -not -path "./tests/fixtures/*" -exec shellcheck {} \; ; \
+		shellcheck claude-reactor ; \
+		echo "$(GREEN)✓ Linting completed$(NC)" ; \
+	else \
+		echo "$(YELLOW)⚠ shellcheck not found, skipping linting$(NC)" ; \
+	fi
+
+.PHONY: format
+format: ## Format shell scripts (requires shfmt)
+	@echo "$(BLUE)Formatting shell scripts...$(NC)"
+	@if command -v shfmt >/dev/null 2>&1; then \
+		find . -name "*.sh" -not -path "./tests/fixtures/*" -exec shfmt -w -i 4 {} \; ; \
+		shfmt -w -i 4 claude-reactor ; \
+		echo "$(GREEN)✓ Formatting completed$(NC)" ; \
+	else \
+		echo "$(YELLOW)⚠ shfmt not found, skipping formatting$(NC)" ; \
+	fi
+
+.PHONY: validate
+validate: dev-setup lint test-unit ## Validate code quality and basic functionality
+	@echo "$(GREEN)✓ Code validation completed$(NC)"
+
+##@ Container Management
+
+.PHONY: run-base
+run-base: ## Run base variant container (delegates to claude-reactor)
+	@echo "$(BLUE)Starting base variant container...$(NC)"
+	./claude-reactor --variant base
+
+.PHONY: run-go
+run-go: ## Run Go variant container (delegates to claude-reactor)
+	@echo "$(BLUE)Starting Go variant container...$(NC)"
+	./claude-reactor --variant go
+
+.PHONY: run-full
+run-full: ## Run full variant container (delegates to claude-reactor)
+	@echo "$(BLUE)Starting full variant container...$(NC)"
+	./claude-reactor --variant full
+
+.PHONY: run-cloud
+run-cloud: ## Run cloud variant container (delegates to claude-reactor)
+	@echo "$(BLUE)Starting cloud variant container...$(NC)"
+	./claude-reactor --variant cloud
+
+.PHONY: run-k8s
+run-k8s: ## Run Kubernetes variant container (delegates to claude-reactor)
+	@echo "$(BLUE)Starting Kubernetes variant container...$(NC)"
+	./claude-reactor --variant k8s
+
+.PHONY: run
+run: ## Run container with auto-detected or saved variant (delegates to claude-reactor)
+	@echo "$(BLUE)Starting container with smart variant detection...$(NC)"
+	./claude-reactor
+
+.PHONY: stop-all
+stop-all: ## Stop all running claude-agent containers (delegates to claude-reactor cleanup)
+	@echo "$(BLUE)Stopping all claude-agent containers...$(NC)"
+	@./claude-reactor --clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
+	@echo "$(GREEN)✓ All containers stopped$(NC)"
+
+.PHONY: logs
+logs: ## Show logs from most recent claude-agent container
+	@CONTAINER=$$(docker ps -a --format '{{.Names}}' | grep '^claude-agent' | head -1) ; \
+	if [ -n "$$CONTAINER" ]; then \
+		echo "$(BLUE)Showing logs for: $$CONTAINER$(NC)" ; \
+		docker logs $$CONTAINER ; \
+	else \
+		echo "$(YELLOW)No claude-agent containers found$(NC)" ; \
+	fi
+
+.PHONY: config
+config: ## Show current claude-reactor configuration
+	@./claude-reactor --show-config
+
+.PHONY: variants
+variants: ## List available container variants
+	@./claude-reactor --list-variants
+
+##@ Cleanup
+
+.PHONY: clean-containers
+clean-containers: ## Remove all claude-agent containers (delegates to claude-reactor)
+	@echo "$(BLUE)Removing claude-agent containers...$(NC)"
+	@./claude-reactor --clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
+	@echo "$(GREEN)✓ Containers cleaned$(NC)"
+
+.PHONY: clean-images
+clean-images: ## Remove all claude-runner images
+	@echo "$(BLUE)Removing claude-runner images...$(NC)"
+	@docker images --format '{{.Repository}}:{{.Tag}}' | grep '^claude-runner' | xargs -r docker rmi -f
+	@echo "$(GREEN)✓ Images cleaned$(NC)"
+
+.PHONY: clean-test
+clean-test: ## Clean test artifacts (delegates to test-runner)
+	@echo "$(BLUE)Cleaning test artifacts...$(NC)"
+	@./tests/test-runner.sh --clean > /dev/null 2>&1 || ( \
+		rm -rf tests/fixtures && \
+		find tests -name ".claude-reactor" -delete 2>/dev/null || true && \
+		find tests -name "go.mod" -delete 2>/dev/null || true && \
+		find tests -name "*.tmp" -delete 2>/dev/null || true \
+	)
+	@echo "$(GREEN)✓ Test artifacts cleaned$(NC)"
+
+.PHONY: clean-config
+clean-config: ## Remove local claude-reactor configuration
+	@echo "$(BLUE)Removing local configuration...$(NC)"
+	@rm -f .claude-reactor
+	@echo "$(GREEN)✓ Configuration cleaned$(NC)"
+
+.PHONY: clean-all
+clean-all: clean-containers clean-images clean-test clean-config ## Complete cleanup (containers, images, test artifacts, config)
+	@echo "$(GREEN)✓ Complete cleanup finished$(NC)"
+
+##@ CI/CD
+
+.PHONY: ci-test
+ci-test: dev-setup test-unit test-integration-quick ## Run CI-appropriate tests
+	@echo "$(GREEN)✓ CI tests completed$(NC)"
+
+.PHONY: ci-build
+ci-build: build-all ## Build core variants for CI
+	@echo "$(GREEN)✓ CI build completed$(NC)"
+
+.PHONY: ci-full
+ci-full: ci-build ci-test ## Complete CI pipeline
+	@echo "$(GREEN)✓ CI pipeline completed$(NC)"
+
+##@ Advanced
+
+.PHONY: benchmark
+benchmark: build-all ## Run container size and performance benchmarks
+	@echo "$(BLUE)Running benchmarks...$(NC)"
+	@echo "Container sizes:"
+	@for variant in $(VARIANTS); do \
+		if docker image inspect $(IMAGE_PREFIX)-$$variant:latest >/dev/null 2>&1; then \
+			size=$$(docker image inspect $(IMAGE_PREFIX)-$$variant:latest --format='{{.Size}}' | numfmt --to=iec) ; \
+			printf "  %-8s %s\n" "$$variant:" "$$size" ; \
+		fi \
+	done
+	@echo ""
+	@echo "$(GREEN)✓ Benchmarks completed$(NC)"
+
+.PHONY: security-scan
+security-scan: ## Run security scans on containers (requires trivy)
+	@echo "$(BLUE)Running security scans...$(NC)"
+	@if command -v trivy >/dev/null 2>&1; then \
+		for variant in base go full; do \
+			if docker image inspect $(IMAGE_PREFIX)-$$variant:latest >/dev/null 2>&1; then \
+				echo "Scanning $$variant variant..." ; \
+				trivy image --exit-code 0 $(IMAGE_PREFIX)-$$variant:latest ; \
+			fi ; \
+		done ; \
+		echo "$(GREEN)✓ Security scans completed$(NC)" ; \
+	else \
+		echo "$(YELLOW)⚠ trivy not found, skipping security scans$(NC)" ; \
+	fi
+
+# Include local overrides if they exist
+-include Makefile.local

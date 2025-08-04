@@ -9,6 +9,8 @@ This project provides a containerized environment for the Claude CLI tool that:
 - Supports both API key and interactive authentication methods
 - Includes kubectl for Kubernetes cluster management
 - Integrates seamlessly with VS Code Dev Containers
+- Uses the `claude` user (non-root) for enhanced security
+- Includes comprehensive development tools (ripgrep, jq, git, Node.js, Python)
 
 ## Components
 
@@ -21,6 +23,25 @@ This project provides a containerized environment for the Claude CLI tool that:
 
 - Docker Desktop installed and running
 - VS Code with Dev Containers extension (for Option B)
+
+### Using claude-reactor (Recommended)
+
+The `claude-reactor` script provides the easiest way to manage the containerized Claude CLI environment:
+
+```bash
+# First time setup - build image and create container
+./claude-reactor
+
+# Available options
+./claude-reactor --help
+./claude-reactor --verbose              # Show detailed output
+./claude-reactor --rebuild              # Force rebuild (auto-cleans old container)
+./claude-reactor --clean                # Remove existing container
+./claude-reactor --interactive-login    # Force interactive UI login
+./claude-reactor --danger              # Launch directly into Claude CLI
+```
+
+**Important:** On first run with `--danger` mode, you'll need to accept the Claude CLI trust dialog once. This acceptance persists via the mounted `~/.claude` directory.
 
 ### Option A: Manual Docker Usage
 
@@ -77,7 +98,7 @@ ANTHROPIC_API_KEY=your_api_key_here
 ```
 
 ### Interactive Method
-Remove the `runArgs` section from `.devcontainer/devcontainer.json`. The file should look like:
+Use `./claude-reactor --interactive-login` to force interactive authentication, or remove the `runArgs` section from `.devcontainer/devcontainer.json`. The file should look like:
 ```json
 {
 	"name": "Claude Interactive Environment",
@@ -97,6 +118,18 @@ Remove the `runArgs` section from `.devcontainer/devcontainer.json`. The file sh
 }
 ```
 
+## First-Time Setup
+
+### Claude CLI Trust Dialog
+When using Claude CLI for the first time in the container (especially with `--danger` mode), you'll need to accept the trust dialog once:
+
+1. Run `./claude-reactor --danger`
+2. Accept the trust dialog when prompted
+3. This acceptance is saved to your mounted `~/.claude` directory and persists across container restarts
+
+### Git Configuration
+Your host's `~/.gitconfig` is automatically mounted, so git operations will use your existing configuration.
+
 ## Kubernetes Access
 
 The container automatically mounts your local `~/.kube` directory, providing access to your Kubernetes clusters. Test with:
@@ -113,6 +146,13 @@ kubectl get pods
 
 ## Cleanup
 
+Using claude-reactor:
+```bash
+./claude-reactor --clean    # Remove container only
+./claude-reactor --rebuild  # Rebuild image (auto-cleans container)
+```
+
+Manual cleanup:
 ```bash
 # Stop and remove container
 docker stop claude-agent && docker rm claude-agent
@@ -120,3 +160,11 @@ docker stop claude-agent && docker rm claude-agent
 # Remove image
 docker rmi claude-runner
 ```
+
+## Features
+
+- **Security**: Runs as non-root `claude` user with sudo access
+- **Development Tools**: Includes ripgrep, jq, fzf, vim, nano, git, Python, Node.js tools
+- **Git Integration**: Git-aware prompt showing branch and dirty status
+- **Configuration Persistence**: Claude CLI, git, and kubectl configs persist via mounted directories
+- **Easy Management**: Single script handles all container lifecycle operations

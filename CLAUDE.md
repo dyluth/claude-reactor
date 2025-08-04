@@ -8,20 +8,25 @@ This is a Docker containerization project for the Claude CLI tool. The project c
 
 ## Project Architecture
 
-This project is designed to create two main components:
+This project creates a modular Docker containerization system for Claude CLI with multiple specialized variants:
 
-1. **Dockerfile**: Defines an ARM64-compatible container environment with:
-   - Debian bullseye-slim base image
-   - Node.js installed via nvm (version 22.17.1)
-   - Claude CLI (`@anthropic-ai/claude-cli`) installed globally
-   - kubectl for Kubernetes cluster access
-   - Working directory set to `/app`
+### **Container Variants:**
+- **base**: Node.js, Python, basic development tools (smallest, ~500MB)
+- **go**: Base + Go toolchain and development utilities (~800MB)  
+- **full**: Go + Rust, Java, database clients (~1.2GB)
+- **cloud**: Full + AWS/GCP/Azure CLIs (~1.5GB)
+- **k8s**: Full + Enhanced Kubernetes tools (helm, k9s, stern) (~1.4GB)
 
-2. **Dev Container Configuration**: Enables VS Code integration with:
-   - Docker container mounting
-   - Kubernetes tools extension
-   - Local `.kube` directory mounting for cluster access
-   - Environment variable injection for API key authentication
+### **Multi-stage Dockerfile:**
+- Uses Docker multi-stage builds for efficiency
+- Each variant builds upon the previous stage
+- ARM64-compatible for M1 Macs
+- Non-root `claude` user for security
+
+### **Smart Configuration:**
+- **Auto-detection**: Detects project type (go.mod → go variant, etc.)
+- **Persistent preferences**: `.claude-reactor` file saves variant choice
+- **Danger mode persistence**: Remembers `--danger` flag preference per project
 
 ## Key File Structure (to be created)
 
@@ -40,29 +45,48 @@ The project supports two authentication approaches:
 
 ## Container Usage Patterns
 
-**Manual Docker approach:**
+**Recommended: claude-reactor script (automated management):**
 ```bash
-# Build image
-docker build -t claude-runner .
+# First time in a Go project - auto-detects and saves preference
+./claude-reactor --variant go
 
-# Run with API key and persistent configs
-docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" -v "${HOME}/.claude:/root/.claude" -v "${HOME}/.gitconfig:/root/.gitconfig" --env-file ~/.env claude-runner
+# Subsequent runs - uses saved preference
+./claude-reactor
 
-# Run for interactive login with persistent configs
-docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" -v "${HOME}/.claude:/root/.claude" -v "${HOME}/.gitconfig:/root/.gitconfig" claude-runner
+# Override for specific needs
+./claude-reactor --variant cloud --danger
 
-# Connect to container
-docker exec -it claude-agent /bin/bash
+# List available variants
+./claude-reactor --list-variants
+
+# Show current configuration
+./claude-reactor --show-config
 ```
 
-**VS Code Dev Containers approach:**
-- Use "Reopen in Container" functionality
-- Automatic environment setup with extensions
-- Claude authentication and git config persist between container restarts via mounted directories
+**Manual Docker approach (advanced users):**
+```bash
+# Build specific variant
+docker build --target go -t claude-runner-go .
+
+# Run with variant-specific naming
+docker run -d --name claude-agent-go -v "$(pwd)":/app -v "${HOME}/.kube:/home/claude/.kube" -v "${HOME}/.claude:/home/claude/.claude" --env-file ~/.env claude-runner-go
+```
+
+## Configuration Files
+
+### `.claude-reactor` (Project-specific settings)
+```bash
+variant=go
+danger=true
+```
+
+This file is automatically created when you use `--variant` or `--danger` flags and stores your preferences per project directory.
 
 ## Important Notes
 
-- This project targets ARM64 architecture (M1 Macs)
-- The container includes both Claude CLI and kubectl for Kubernetes operations
-- Local Kubernetes config is mounted to enable cluster access from within the container
-- The setup ensures complete isolation from the host machine
+- **Architecture**: ARM64-compatible (M1 Macs, but works on x86_64 too)
+- **Security**: Non-root `claude` user with sudo access inside container
+- **Persistence**: Claude config, git settings, and Kubernetes config mounted from host
+- **Isolation**: Complete separation from host system while maintaining access to necessary configs
+- **Auto-detection**: Intelligently selects appropriate variant based on project files
+- **Modularity**: Choose only the tools you need to keep container size manageable
