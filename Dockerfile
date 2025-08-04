@@ -5,6 +5,9 @@ FROM debian:bullseye-slim
 # Install dependencies required for nvm, kubectl, and general development
 RUN apt-get update && apt-get install -y curl git ca-certificates && rm -rf /var/lib/apt/lists/*
 
+# --- Install git-aware-prompt ---
+RUN git clone https://github.com/jimeh/git-aware-prompt.git /usr/local/git-aware-prompt
+
 # --- Install kubectl ---
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl" && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
@@ -28,6 +31,11 @@ RUN . "$NVM_DIR/nvm.sh" && \
 
 # Add the nvm-installed node and npm to the PATH for all future shell sessions
 ENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
+
+# --- Configure git-aware-prompt ---
+RUN echo 'export GITAWAREPROMPT=/usr/local/git-aware-prompt' >> /root/.bashrc && \
+    echo 'source "${GITAWAREPROMPT}/main.sh"' >> /root/.bashrc && \
+    echo 'export PS1="\u@\h \W \[\$txtcyn\]\$git_branch\[\$txtred\]\$git_dirty\[\$txtrst\]\$ "' >> /root/.bashrc
 
 # Set the working directory for when we connect to the container
 WORKDIR /app
