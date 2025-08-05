@@ -16,7 +16,16 @@
       "Bash(claude config list)",
       "Bash(ls:*)",
       "Bash(true)",
-      "Bash(./claude-reactor:*)"
+      "Bash(./claude-reactor:*)",
+      "Bash(bash:*)",
+      "Bash(cat:*)",
+      "Bash(jq:*)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(make:*)",
+      "Bash(grep:*)",
+      "Bash(../claude-reactor --variant full --show-config)",
+      "Bash(../claude-reactor --variant invalid --show-config)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

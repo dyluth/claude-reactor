@@ -118,13 +118,13 @@ Once the files are created, here are the two primary ways to connect to and work
 
 This is the classic, manual way to interact with a running container.
 
-1. **Build the image:** docker build \-t claude-runner .  
+1. **Build the image:** docker build \-t claude-reactor .  
 2. **Run the container in the background:**  
    * **For API Key Authentication:**  
-     docker run \-d \--name claude-agent \-v "$(pwd)":/app \-v "${HOME}/.kube:/root/.kube" \--env-file \~/.env claude-runner
+     docker run \-d \--name claude-agent \-v "$(pwd)":/app \-v "${HOME}/.kube:/root/.kube" \--env-file \~/.env claude-reactor
 
    * **For Interactive UI Login:**  
-     docker run \-d \--name claude-agent \-v "$(pwd)":/app \-v "${HOME}/.kube:/root/.kube" claude-runner
+     docker run \-d \--name claude-agent \-v "$(pwd)":/app \-v "${HOME}/.kube:/root/.kube" claude-reactor
 
 3. **Connect with a shell:** docker exec \-it claude-agent /bin/bash  
 4. **Run Commands:** Inside the container's shell, you can now run both claude and kubectl (e.g., kubectl get pods).

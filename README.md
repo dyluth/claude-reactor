@@ -47,19 +47,19 @@ The `claude-reactor` script provides the easiest way to manage the containerized
 
 1. **Build the image:**
    ```bash
-   docker build -t claude-runner .
+   docker build -t claude-reactor .
    ```
 
 2. **Run the container:**
    
    **For API Key Authentication:**
    ```bash
-   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" --env-file ~/.env claude-runner
+   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" --env-file ~/.env claude-reactor
    ```
    
    **For Interactive UI Login:**
    ```bash
-   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" claude-runner
+   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" claude-reactor
    ```
 
 3. **Connect to the container:**
@@ -158,7 +158,7 @@ Manual cleanup:
 docker stop claude-agent && docker rm claude-agent
 
 # Remove image
-docker rmi claude-runner
+docker rmi claude-reactor
 ```
 
 ## Features

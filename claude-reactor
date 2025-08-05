@@ -16,9 +16,20 @@ SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 VERBOSE=false
 
 # --- Configuration ---
-BASE_IMAGE_NAME="claude-runner"
+BASE_IMAGE_NAME="claude-reactor"
 BASE_CONTAINER_NAME="claude-agent"
 CONFIG_FILE=".claude-reactor"
+CLAUDE_CONFIG_SNAPSHOT=""
+
+# Cleanup function
+cleanup() {
+    if [ -n "$CLAUDE_CONFIG_SNAPSHOT" ] && [ -f "$CLAUDE_CONFIG_SNAPSHOT" ]; then
+        rm -f "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null || true
+    fi
+}
+
+# Set cleanup trap
+trap cleanup EXIT
 
 # --- Helper Functions ---
 show_usage() {
@@ -35,14 +46,17 @@ OPTIONS:
     --rebuild             Force rebuild of Docker image
     --clean               Remove existing container and start fresh
     --danger              Launch Claude CLI with --dangerously-skip-permissions
+    --shell               Launch bash shell instead of Claude CLI directly
     --install             Install claude-reactor to /usr/local/bin (requires sudo)
     --uninstall           Remove claude-reactor from /usr/local/bin (requires sudo)
     --verbose, -v         Enable verbose output
     --help, -h            Show this help message
 
 EXAMPLES:
-    $SCRIPT_NAME                         # Use saved variant or auto-detect
+    $SCRIPT_NAME                         # Launch Claude CLI directly (uses saved config)
     $SCRIPT_NAME --variant go            # Use Go variant and save preference
+    $SCRIPT_NAME --shell                 # Launch bash shell instead of Claude CLI
+    $SCRIPT_NAME --danger                # Launch Claude CLI with --dangerously-skip-permissions
     $SCRIPT_NAME --variant full --danger # Use full variant with danger mode
     $SCRIPT_NAME --list-variants         # Show available variants
     $SCRIPT_NAME --show-config           # Show current configuration
@@ -194,6 +208,7 @@ REBUILD=false
 CLEAN=false
 INTERACTIVE_LOGIN=false
 DANGER_MODE=false
+SHELL_MODE=false
 INSTALL=false
 UNINSTALL=false
 EXPLICIT_VARIANT=""
@@ -242,6 +257,10 @@ while [[ $# -gt 0 ]]; do
             DANGER_MODE=true
             shift
             ;;
+        --shell)
+            SHELL_MODE=true
+            shift
+            ;;
         --install)
             INSTALL=true
             shift
@@ -258,6 +277,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Validate Explicit Variant First ---
+if [ -n "$EXPLICIT_VARIANT" ]; then
+    if ! validate_variant "$EXPLICIT_VARIANT"; then
+        exit 1
+    fi
+fi
+
+# --- Load Configuration ---
+load_config
+
+# --- Early Configuration Determination for Special Commands ---
+# We need to determine VARIANT early for commands that might need it
+VARIANT=${EXPLICIT_VARIANT:-${SAVED_VARIANT:-$(auto_detect_variant)}}
+
+# --- Save Configuration if Explicit Options Were Provided ---
+# This must happen before early exits so that --show-config shows saved config
+if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ]; then
+    save_config "$VARIANT" "$DANGER_MODE"
+fi
+
 # --- Handle Special Commands ---
 if [ "$SHOW_VARIANTS" = true ]; then
     show_variants
@@ -267,16 +306,6 @@ fi
 if [ "$SHOW_CONFIG" = true ]; then
     show_current_config
     exit 0
-fi
-
-# --- Load Configuration ---
-load_config
-
-# --- Validate Explicit Variant ---
-if [ -n "$EXPLICIT_VARIANT" ]; then
-    if ! validate_variant "$EXPLICIT_VARIANT"; then
-        exit 1
-    fi
 fi
 
 # --- Install/Uninstall Handling ---
@@ -335,8 +364,7 @@ fi
 
 log_verbose "Docker found: $(docker --version)"
 
-# --- Determine Variant and Names ---
-VARIANT=$(determine_variant)
+# --- Determine Names from Early Variant Assignment ---
 IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT"
 CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT"
 
@@ -348,11 +376,6 @@ log_verbose "Container name: $CONTAINER_NAME"
 if [ "$SAVED_DANGER" = true ] && [ "$DANGER_MODE" = false ]; then
     log_verbose "Applying saved danger mode setting"
     DANGER_MODE=true
-fi
-
-# --- Save Configuration if Explicit Options Were Provided ---
-if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ]; then
-    save_config "$VARIANT" "$DANGER_MODE"
 fi
 
 # --- Container Cleanup ---
@@ -430,6 +453,10 @@ else
     # Container does not exist. Create and run it for the first time.
     log_info "Creating and starting new container '${CONTAINER_NAME}'..."
     
+    # Ensure host directories exist for mounting
+    mkdir -p "${HOME}/.claude"
+    mkdir -p "${HOME}/.kube"
+    
     # Base arguments for the docker run command
     DOCKER_RUN_ARGS=(
         -d
@@ -438,7 +465,27 @@ else
         -v "${HOME}/.kube:/home/claude/.kube"
         -v "${HOME}/.claude:/home/claude/.claude"
         -v "${HOME}/.gitconfig:/home/claude/.gitconfig"
+        -v "/var/run/docker.sock:/var/run/docker.sock"
     )
+    
+    # Mount host Claude config file if it exists and is valid JSON
+    if [ -f "${HOME}/.claude.json" ]; then
+        # Create a temporary snapshot to avoid race conditions during container startup
+        CLAUDE_CONFIG_SNAPSHOT="/tmp/.claude.json.$$"
+        if cp "${HOME}/.claude.json" "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null; then
+            # Validate the snapshot before mounting
+            if command -v jq >/dev/null 2>&1 && jq empty "$CLAUDE_CONFIG_SNAPSHOT" >/dev/null 2>&1; then
+                DOCKER_RUN_ARGS+=("-v" "$CLAUDE_CONFIG_SNAPSHOT:/home/claude/.claude.json")
+                log_verbose "Mounting Claude config snapshot for authentication persistence"
+            else
+                log_warning "Claude config snapshot has invalid JSON, skipping mount"
+                log_warning "Claude CLI will create fresh configuration in container"
+                rm -f "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null || true
+            fi
+        else
+            log_warning "Could not create Claude config snapshot, skipping mount"
+        fi
+    fi
     
     # Handle authentication method
     if [ "$INTERACTIVE_LOGIN" = true ]; then
@@ -480,43 +527,60 @@ for i in {1..5}; do
     sleep 1
 done
 
-# --- Sync Claude Configuration ---
-log_verbose "Syncing Claude CLI configuration..."
-if command -v claude &> /dev/null; then
-    # Get host configuration values
-    HOST_TRUST=$(claude config get hasTrustDialogAccepted 2>/dev/null || echo "false")
-    HOST_ONBOARDING=$(claude config get hasCompletedProjectOnboarding 2>/dev/null || echo "false")
-    
-    if [ "$HOST_TRUST" = "true" ]; then
-        log_verbose "Bypassing Claude CLI config by pre-accepting trust dialog"
-        # Create a wrapper script that bypasses the config dialog
-        docker exec --user claude "$CONTAINER_NAME" sh -c 'cat > /tmp/claude-bypass << "EOF"
-#!/bin/bash
-# Temporarily set environment to bypass trust dialog
-export CLAUDE_SKIP_TRUST_DIALOG=1
-export CLAUDE_TRUST_ACCEPTED=true
-exec claude "$@"
-EOF
-chmod +x /tmp/claude-bypass' &> /dev/null || true
-    fi
-else
-    log_verbose "Claude CLI not found on host, skipping config sync"
+# --- Ensure Claude Configuration Persistence ---
+log_verbose "Setting up Claude CLI configuration persistence..."
+
+# Ensure the container's .claude directory has proper ownership
+docker exec --user root "$CONTAINER_NAME" chown -R claude:claude /home/claude/.claude 2>/dev/null || true
+
+# Ensure mounted .claude.json file has proper ownership if it exists
+if [ -f "${HOME}/.claude.json" ]; then
+    docker exec --user root "$CONTAINER_NAME" chown claude:claude /home/claude/.claude.json 2>/dev/null || true
 fi
+
+# Ensure project directory structure exists
+log_verbose "Setting up Claude CLI project directory structure"
+docker exec --user claude "$CONTAINER_NAME" sh -c 'mkdir -p /home/claude/.claude/projects/-app 2>/dev/null || true'
+
+# If Claude config file isn't mounted from host, create basic trust configuration
+if [ ! -f "${HOME}/.claude.json" ]; then
+    log_verbose "Creating initial Claude CLI configuration for /app directory trust"
+    docker exec --user claude "$CONTAINER_NAME" sh -c 'cat > /home/claude/.claude.json << "EOF"
+{
+  "hasTrustDialogAccepted": true,
+  "hasCompletedProjectOnboarding": true,
+  "trustedDirectories": {"/app": true}
+}
+EOF' 2>/dev/null || true
+else
+    log_verbose "Using mounted Claude config file from host"
+fi
+
+# Ensure claude user can access Docker socket
+log_verbose "Configuring Docker socket access for claude user"
+docker exec --user root "$CONTAINER_NAME" sh -c '
+    # Get the group ID of the docker socket
+    DOCKER_GID=$(stat -c %g /var/run/docker.sock 2>/dev/null || echo "999")
+    # Add claude user to docker group (create if needed)
+    getent group docker >/dev/null || groupadd -g $DOCKER_GID docker
+    usermod -aG docker claude
+' 2>/dev/null || true
 
 # --- Attach to the Container ---
 # By this point, the container is guaranteed to be running.
-if [ "$DANGER_MODE" = true ]; then
-    log_info "⚠️  DANGER MODE: Launching Claude CLI with --dangerously-skip-permissions"
-    log_verbose "Connecting directly to Claude CLI with bypassed permissions"
-    # Use bypass script if trust dialog was accepted on host
-    if [ "$HOST_TRUST" = "true" ] 2>/dev/null; then
-        log_verbose "Using config bypass script"
-        docker exec -it --user claude "$CONTAINER_NAME" /tmp/claude-bypass --dangerously-skip-permissions
-    else
-        docker exec -it --user claude "$CONTAINER_NAME" claude --dangerously-skip-permissions
-    fi
-else
-    # Use bash-with-prompt to ensure git-aware-prompt loads properly
+if [ "$SHELL_MODE" = true ]; then
+    # User explicitly requested shell access
+    log_info "Launching bash shell in container"
     log_verbose "Connecting to container with git-aware prompt enabled"
     docker exec -it --user claude "$CONTAINER_NAME" bash-with-prompt
+elif [ "$DANGER_MODE" = true ]; then
+    # User requested danger mode - launch Claude CLI with bypassed permissions
+    log_info "⚠️  DANGER MODE: Launching Claude CLI with --dangerously-skip-permissions"
+    log_verbose "Connecting directly to Claude CLI with bypassed permissions"
+    docker exec -it --user claude "$CONTAINER_NAME" claude --dangerously-skip-permissions
+else
+    # Default behavior - launch Claude CLI directly
+    log_info "Launching Claude CLI in container"
+    log_verbose "Connecting directly to Claude CLI"
+    docker exec -it --user claude "$CONTAINER_NAME" claude
 fi

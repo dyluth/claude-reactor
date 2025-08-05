@@ -173,14 +173,26 @@ main() {
                 log_failure "Integration tests failed"
             fi
         else
+            # Run Docker variant tests
             if "$SCRIPT_DIR/integration/test-variants.sh"; then
                 TESTS_RUN=$((TESTS_RUN + 1))
                 TESTS_PASSED=$((TESTS_PASSED + 1))
-                log_success "Integration tests completed"
+                log_success "Docker variant tests completed"
             else
                 TESTS_RUN=$((TESTS_RUN + 1))
                 TESTS_FAILED=$((TESTS_FAILED + 1))
-                log_failure "Integration tests failed"
+                log_failure "Docker variant tests failed"
+            fi
+            
+            # Run persistence tests
+            if "$SCRIPT_DIR/integration/test-persistence.sh"; then
+                TESTS_RUN=$((TESTS_RUN + 1))
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                log_success "Configuration persistence tests completed"
+            else
+                TESTS_RUN=$((TESTS_RUN + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                log_failure "Configuration persistence tests failed"
             fi
         fi
     fi
