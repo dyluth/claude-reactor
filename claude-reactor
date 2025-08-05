@@ -19,17 +19,6 @@ VERBOSE=false
 BASE_IMAGE_NAME="claude-reactor"
 BASE_CONTAINER_NAME="claude-reactor"
 CONFIG_FILE=".claude-reactor"
-CLAUDE_CONFIG_SNAPSHOT=""
-
-# Cleanup function
-cleanup() {
-    if [ -n "$CLAUDE_CONFIG_SNAPSHOT" ] && [ -f "$CLAUDE_CONFIG_SNAPSHOT" ]; then
-        rm -f "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null || true
-    fi
-}
-
-# Set cleanup trap
-trap cleanup EXIT
 
 # --- Helper Functions ---
 show_usage() {
@@ -650,6 +639,10 @@ else
     for mount_path in "${MOUNT_PATHS[@]}"; do
         # Expand tilde if present
         expanded_path="${mount_path/#\~/$HOME}"
+        # Convert to absolute path
+        if [[ "$expanded_path" != /* ]]; then
+            expanded_path="$(pwd)/$expanded_path"
+        fi
         # Get the basename for the mount point
         mount_name=$(basename "$expanded_path")
         # Check if directory exists
@@ -661,39 +654,26 @@ else
         fi
     done
     
-    # Mount account-specific Claude config file if it exists and is valid JSON
+    # Mount main Claude config file (contains all account information)
+    CLAUDE_CONFIG_FILE="${HOME}/.claude.json"
     ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
-    if [ -n "$ACCOUNT_ID" ]; then
-        CLAUDE_CONFIG_FILE="${HOME}/.claude.${ACCOUNT_ID}.json"
-        log_verbose "Using account-specific config: $CLAUDE_CONFIG_FILE"
-    else
-        CLAUDE_CONFIG_FILE="${HOME}/.claude.json"
-        log_verbose "Using default Claude config: $CLAUDE_CONFIG_FILE"
-    fi
     
     if [ -f "$CLAUDE_CONFIG_FILE" ]; then
-        # Create a temporary snapshot to avoid race conditions during container startup
-        CLAUDE_CONFIG_SNAPSHOT="/tmp/.claude.json.$$"
-        if cp "$CLAUDE_CONFIG_FILE" "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null; then
-            # Validate the snapshot before mounting
-            if command -v jq >/dev/null 2>&1 && jq empty "$CLAUDE_CONFIG_SNAPSHOT" >/dev/null 2>&1; then
-                DOCKER_RUN_ARGS+=("-v" "$CLAUDE_CONFIG_SNAPSHOT:/home/claude/.claude.json")
-                if [ -n "$ACCOUNT_ID" ]; then
-                    log_verbose "Mounting Claude config snapshot for account '$ACCOUNT_ID'"
-                else
-                    log_verbose "Mounting Claude config snapshot for default account"
-                fi
+        # Validate the config file before mounting
+        if command -v jq >/dev/null 2>&1 && jq empty "$CLAUDE_CONFIG_FILE" >/dev/null 2>&1; then
+            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_CONFIG_FILE:/home/claude/.claude.json")
+            if [ -n "$ACCOUNT_ID" ]; then
+                log_verbose "Mounting Claude config (account: $ACCOUNT_ID)"
             else
-                log_warning "Claude config snapshot has invalid JSON, skipping mount"
-                log_warning "Claude CLI will create fresh configuration in container"
-                rm -f "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null || true
+                log_verbose "Mounting Claude config (default account)"
             fi
         else
-            log_warning "Could not create Claude config snapshot, skipping mount"
+            log_warning "Claude config has invalid JSON, skipping mount"
+            log_warning "Claude CLI will create fresh configuration in container"
         fi
-    elif [ -n "$ACCOUNT_ID" ]; then
-        log_info "Account-specific config not found: $CLAUDE_CONFIG_FILE"
-        log_info "Claude CLI will prompt for login for account '$ACCOUNT_ID'"
+    else
+        log_info "No Claude config found: $CLAUDE_CONFIG_FILE"
+        log_info "Claude CLI will prompt for login"
     fi
     
     # Handle authentication method
@@ -714,9 +694,14 @@ else
             DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
             log_verbose "Using global ~/.env API key file"
         else
-            log_info "No API key files found. Using interactive UI login."
-            log_verbose "Create project API key: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
-            log_verbose "Or create global ~/.env with ANTHROPIC_API_KEY=YOUR_KEY"
+            if [ -f "$CLAUDE_CONFIG_FILE" ]; then
+                log_info "No API key files found. Using existing Claude authentication from config."
+                log_verbose "Create project API key if needed: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
+            else
+                log_info "No API key files found. Using interactive UI login."
+                log_verbose "Create project API key: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
+                log_verbose "Or create global ~/.env with ANTHROPIC_API_KEY=YOUR_KEY"
+            fi
         fi
     fi
     
@@ -730,6 +715,18 @@ else
         exit 1
     fi
     log_verbose "Container created and started successfully"
+    
+    # Show mounted directories summary
+    if [ ${#MOUNT_PATHS[@]} -gt 0 ]; then
+        log_info "📁 Mounted directories:"
+        for mount_path in "${MOUNT_PATHS[@]}"; do
+            expanded_path="${mount_path/#\~/$HOME}"
+            mount_name=$(basename "$expanded_path")
+            if [ -d "$expanded_path" ]; then
+                log_info "   $expanded_path → /mnt/$mount_name"
+            fi
+        done
+    fi
 fi
 
 # --- Container Health Check ---
