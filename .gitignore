@@ -1,0 +1,27 @@
+# Claude-reactor project-specific configuration files
+.claude-reactor
+.claude-reactor-*-env
+
+# Test directories and files
+support-bot-test/
+test-project/
+*-test/
+
+# Environment files containing API keys
+.env
+*.env
+
+# Docker temporary files
+.claude.json.*
+
+# macOS
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
