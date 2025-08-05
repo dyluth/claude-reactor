@@ -42,6 +42,7 @@ OPTIONS:
     --variant VARIANT     Set container variant (base, go, full, cloud, k8s)
     --account ACCOUNT     Set Claude account ID for this folder
     --apikey APIKEY       Set API key for current account (saves to project-specific file)
+    --mount PATH          Mount additional directory to /mnt/basename (can be used multiple times)
     --list-accounts       Show available Claude accounts
     --list-variants       Show available variants
     --show-config         Show current configuration
@@ -61,6 +62,8 @@ EXAMPLES:
     $SCRIPT_NAME --variant go            # Use Go variant and save preference
     $SCRIPT_NAME --account work          # Use 'work' account for this folder
     $SCRIPT_NAME --account work --apikey sk-ant-xxx # Set API key for work account
+    $SCRIPT_NAME --mount ~/Documents     # Mount ~/Documents to /mnt/Documents
+    $SCRIPT_NAME --mount /tmp --mount ~/src # Mount multiple directories
     $SCRIPT_NAME --shell                 # Launch bash shell instead of Claude CLI
     $SCRIPT_NAME --danger                # Launch Claude CLI with --dangerously-skip-permissions
     $SCRIPT_NAME --variant full --danger # Use full variant with danger mode
@@ -306,6 +309,7 @@ EXPLICIT_APIKEY=""
 SHOW_VARIANTS=false
 SHOW_ACCOUNTS=false
 SHOW_CONFIG=false
+MOUNT_PATHS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -335,6 +339,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             EXPLICIT_APIKEY="$2"
+            shift 2
+            ;;
+        --mount)
+            if [[ -z "$2" ]]; then
+                log_error "--mount requires a path"
+                exit 1
+            fi
+            MOUNT_PATHS+=("$2")
             shift 2
             ;;
         --list-variants)
@@ -633,6 +645,21 @@ else
         -v "${HOME}/.gitconfig:/home/claude/.gitconfig"
         -v "/var/run/docker.sock:/var/run/docker.sock"
     )
+    
+    # Add additional mount paths
+    for mount_path in "${MOUNT_PATHS[@]}"; do
+        # Expand tilde if present
+        expanded_path="${mount_path/#\~/$HOME}"
+        # Get the basename for the mount point
+        mount_name=$(basename "$expanded_path")
+        # Check if directory exists
+        if [ -d "$expanded_path" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$expanded_path:/mnt/$mount_name")
+            log_verbose "Adding mount: $expanded_path -> /mnt/$mount_name"
+        else
+            log_warning "Mount path does not exist: $expanded_path"
+        fi
+    done
     
     # Mount account-specific Claude config file if it exists and is valid JSON
     ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
