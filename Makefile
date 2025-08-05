@@ -3,7 +3,7 @@
 
 # Configuration
 DOCKER_REGISTRY ?= 
-IMAGE_PREFIX ?= claude-runner
+IMAGE_PREFIX ?= claude-reactor
 VARIANTS = base go full cloud k8s
 PROJECT_NAME = claude-reactor
 
@@ -210,6 +210,11 @@ format: ## Format shell scripts (requires shfmt)
 validate: dev-setup lint test-unit ## Validate code quality and basic functionality
 	@echo "$(GREEN)✓ Code validation completed$(NC)"
 
+.PHONY: test-persistence
+test-persistence: ## Test Claude CLI configuration persistence across container restarts
+	@echo "$(BLUE)Testing Claude CLI configuration persistence...$(NC)"
+	@./tests/integration/test-persistence.sh
+
 ##@ Container Management
 
 .PHONY: run-base
@@ -275,9 +280,9 @@ clean-containers: ## Remove all claude-agent containers (delegates to claude-rea
 	@echo "$(GREEN)✓ Containers cleaned$(NC)"
 
 .PHONY: clean-images
-clean-images: ## Remove all claude-runner images
-	@echo "$(BLUE)Removing claude-runner images...$(NC)"
-	@docker images --format '{{.Repository}}:{{.Tag}}' | grep '^claude-runner' | xargs -r docker rmi -f
+clean-images: ## Remove all claude-reactor images
+	@echo "$(BLUE)Removing claude-reactor images...$(NC)"
+	@docker images --format '{{.Repository}}:{{.Tag}}' | grep '^claude-reactor' | xargs -r docker rmi -f
 	@echo "$(GREEN)✓ Images cleaned$(NC)"
 
 .PHONY: clean-test

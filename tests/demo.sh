@@ -226,12 +226,12 @@ EOF
     cd "$PROJECT_ROOT"
     
     demo_step "Building base variant (fastest):"
-    demo_command "docker build --target base -t claude-runner-base . || echo 'Build failed - this is expected in demo'"
+    demo_command "docker build --target base -t claude-reactor-base . || echo 'Build failed - this is expected in demo'"
     
     demo_step "Testing if base variant has expected tools:"
-    if docker image inspect claude-runner-base > /dev/null 2>&1; then
-        demo_command "docker run --rm claude-runner-base which node || echo 'Tool check failed'"
-        demo_command "docker run --rm claude-runner-base which python3 || echo 'Tool check failed'"
+    if docker image inspect claude-reactor-base > /dev/null 2>&1; then
+        demo_command "docker run --rm claude-reactor-base which node || echo 'Tool check failed'"
+        demo_command "docker run --rm claude-reactor-base which python3 || echo 'Tool check failed'"
     else
         echo "Base image not available - skipping tool checks"
     fi
@@ -239,12 +239,12 @@ EOF
     demo_pause
     
     demo_step "Building Go variant:"
-    demo_command "docker build --target go -t claude-runner-go . || echo 'Build failed - this is expected in demo'"
+    demo_command "docker build --target go -t claude-reactor-go . || echo 'Build failed - this is expected in demo'"
     
-    if docker image inspect claude-runner-go > /dev/null 2>&1; then
+    if docker image inspect claude-reactor-go > /dev/null 2>&1; then
         demo_step "Testing Go tools:"
-        demo_command "docker run --rm claude-runner-go which go || echo 'Tool check failed'"
-        demo_command "docker run --rm claude-runner-go go version || echo 'Tool check failed'"
+        demo_command "docker run --rm claude-reactor-go which go || echo 'Tool check failed'"
+        demo_command "docker run --rm claude-reactor-go go version || echo 'Tool check failed'"
     else
         echo "Go image not available - skipping tool checks"
     fi
@@ -267,7 +267,7 @@ EOF
     
     if [ "$AUTO_MODE" = false ]; then
         echo -e "${BLUE}In a real scenario, this would now:${NC}"
-        echo "- Build the claude-runner-go image (if needed)"
+        echo "- Build the claude-reactor-go image (if needed)"
         echo "- Start a container named claude-agent-go"
         echo "- Connect you to the container with all Go tools available"
         echo ""

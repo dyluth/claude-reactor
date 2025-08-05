@@ -69,8 +69,10 @@ The project supports two authentication approaches:
 ### **Primary Development Workflow (Recommended)**
 ```bash
 # Smart container management - auto-detects project type
-./claude-reactor                    # Uses auto-detection or saved preferences
+./claude-reactor                    # Launch Claude CLI directly (uses saved config)
 ./claude-reactor --variant go       # Set specific variant and save preference
+./claude-reactor --shell            # Launch bash shell instead of Claude CLI
+./claude-reactor --danger           # Launch Claude CLI with --dangerously-skip-permissions
 ./claude-reactor --show-config      # Check current configuration
 ./claude-reactor --list-variants    # See all available options
 ```
@@ -109,8 +111,8 @@ make clean-containers              # or ./claude-reactor --clean
 ./claude-reactor --rebuild                   # Force image rebuild
 
 # Manual Docker control (rarely needed)
-docker build --target go -t claude-runner-go .
-docker run -d --name claude-agent-go -v "$(pwd)":/app claude-runner-go
+docker build --target go -t claude-reactor-go .
+docker run -d --name claude-agent-go -v "$(pwd)":/app claude-reactor-go
 ```
 
 ## Configuration Files

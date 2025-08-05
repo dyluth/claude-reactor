@@ -54,7 +54,7 @@ check_docker() {
 # Test building a specific variant
 test_build_variant() {
     local variant="$1"
-    local image_name="claude-runner-$variant"
+    local image_name="claude-reactor-$variant"
     
     log_info "Building variant: $variant"
     
@@ -73,7 +73,7 @@ test_build_variant() {
 # Test that a container can be created and started
 test_container_lifecycle() {
     local variant="$1"
-    local image_name="claude-runner-$variant"
+    local image_name="claude-reactor-$variant"
     local container_name="test-claude-agent-$variant-$$"
     
     log_info "Testing container lifecycle for variant: $variant"
@@ -110,7 +110,7 @@ test_container_lifecycle() {
 # Test that expected tools are available in variant
 test_variant_tools() {
     local variant="$1"
-    local image_name="claude-runner-$variant"
+    local image_name="claude-reactor-$variant"
     local container_name="test-tools-$variant-$$"
     
     log_info "Testing tools availability for variant: $variant"
