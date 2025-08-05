@@ -2,6 +2,9 @@
 .claude-reactor
 .claude-reactor-*-env
 
+# Claude Code local settings
+.claude/
+
 # Test directories and files
 support-bot-test/
 test-project/
