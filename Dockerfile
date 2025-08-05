@@ -39,7 +39,7 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /
 # --- Install Node.js and Claude CLI ---
 # Set environment variables for nvm
 ENV NVM_DIR=/usr/local/nvm
-ENV NODE_VERSION=22.17.0
+ENV NODE_VERSION=20.18.0
 
 # Create NVM directory and install nvm
 RUN mkdir -p $NVM_DIR && \

@@ -17,7 +17,7 @@ VERBOSE=false
 
 # --- Configuration ---
 BASE_IMAGE_NAME="claude-reactor"
-BASE_CONTAINER_NAME="claude-agent"
+BASE_CONTAINER_NAME="claude-reactor"
 CONFIG_FILE=".claude-reactor"
 CLAUDE_CONFIG_SNAPSHOT=""
 
@@ -40,11 +40,15 @@ A wrapper script to manage and connect to the interactive Claude Docker environm
 
 OPTIONS:
     --variant VARIANT     Set container variant (base, go, full, cloud, k8s)
+    --account ACCOUNT     Set Claude account ID for this folder
+    --apikey APIKEY       Set API key for current account (saves to project-specific file)
+    --list-accounts       Show available Claude accounts
     --list-variants       Show available variants
     --show-config         Show current configuration
     --interactive-login   Force interactive UI login instead of API key
     --rebuild             Force rebuild of Docker image
-    --clean               Remove existing container and start fresh
+    --clean               Remove current project/account container and start fresh
+    --clean-all           Remove ALL claude-reactor containers
     --danger              Launch Claude CLI with --dangerously-skip-permissions
     --shell               Launch bash shell instead of Claude CLI directly
     --install             Install claude-reactor to /usr/local/bin (requires sudo)
@@ -55,13 +59,17 @@ OPTIONS:
 EXAMPLES:
     $SCRIPT_NAME                         # Launch Claude CLI directly (uses saved config)
     $SCRIPT_NAME --variant go            # Use Go variant and save preference
+    $SCRIPT_NAME --account work          # Use 'work' account for this folder
+    $SCRIPT_NAME --account work --apikey sk-ant-xxx # Set API key for work account
     $SCRIPT_NAME --shell                 # Launch bash shell instead of Claude CLI
     $SCRIPT_NAME --danger                # Launch Claude CLI with --dangerously-skip-permissions
     $SCRIPT_NAME --variant full --danger # Use full variant with danger mode
     $SCRIPT_NAME --list-variants         # Show available variants
+    $SCRIPT_NAME --list-accounts         # Show available Claude accounts
     $SCRIPT_NAME --show-config           # Show current configuration
     $SCRIPT_NAME --rebuild               # Force rebuild current variant
-    $SCRIPT_NAME --clean                 # Remove container and start fresh
+    $SCRIPT_NAME --clean                 # Remove current container and start fresh
+    $SCRIPT_NAME --clean-all             # Remove ALL claude-reactor containers
     $SCRIPT_NAME --install               # Install to PATH
 
 EOF
@@ -81,19 +89,57 @@ log_error() {
     echo "Error: $1" >&2
 }
 
+log_warning() {
+    echo "Warning: $1" >&2
+}
+
+# --- API Key Management Functions ---
+save_api_key() {
+    local account_id="$1"
+    local api_key="$2"
+    
+    if [ -z "$account_id" ]; then
+        local env_file=".claude-reactor-env"
+    else
+        local env_file=".claude-reactor-${account_id}-env"
+    fi
+    
+    echo "ANTHROPIC_API_KEY=$api_key" > "$env_file"
+    chmod 600 "$env_file"
+    
+    log_info "API key saved to $env_file"
+    log_verbose "Saved API key for account: ${account_id:-default}"
+}
+
+get_api_key_file() {
+    local account_id="$1"
+    
+    if [ -z "$account_id" ]; then
+        local env_file=".claude-reactor-env"
+    else
+        local env_file=".claude-reactor-${account_id}-env"
+    fi
+    
+    echo "$env_file"
+}
+
 # --- Configuration Functions ---
 save_config() {
     local variant="$1"
     local danger_mode="$2"
+    local account_id="$3"
     
     {
         echo "variant=$variant"
         if [ "$danger_mode" = true ]; then
             echo "danger=true"
         fi
+        if [ -n "$account_id" ]; then
+            echo "account=$account_id"
+        fi
     } > "$CONFIG_FILE"
     
-    log_verbose "Saved configuration: variant=$variant, danger=$danger_mode"
+    log_verbose "Saved configuration: variant=$variant, danger=$danger_mode, account=$account_id"
 }
 
 load_config() {
@@ -111,11 +157,15 @@ load_config() {
             SAVED_DANGER=false
         fi
         
-        log_verbose "Loaded: variant=$SAVED_VARIANT, danger=$SAVED_DANGER"
+        # Load account setting
+        SAVED_ACCOUNT=$(grep "^account=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        
+        log_verbose "Loaded: variant=$SAVED_VARIANT, danger=$SAVED_DANGER, account=$SAVED_ACCOUNT"
     else
         log_verbose "No configuration file found"
         SAVED_VARIANT=""
         SAVED_DANGER=false
+        SAVED_ACCOUNT=""
     fi
 }
 
@@ -183,6 +233,43 @@ EOF
     fi
 }
 
+show_accounts() {
+    echo "Available Claude accounts:"
+    echo ""
+    
+    # Look for Claude config files in home directory
+    local found_configs=false
+    
+    # Check for default account
+    if [ -f "${HOME}/.claude.json" ]; then
+        echo "  default - ${HOME}/.claude.json"
+        found_configs=true
+    fi
+    
+    # Check for account-specific configs
+    for config_file in "${HOME}"/.claude.*.json; do
+        if [ -f "$config_file" ]; then
+            local account_name=$(basename "$config_file" .json | sed 's/^\.claude\.//')
+            echo "  $account_name - $config_file"
+            found_configs=true
+        fi
+    done
+    
+    if [ "$found_configs" = false ]; then
+        echo "  No Claude account configurations found"
+        echo "  Login with Claude CLI to create account configs"
+    fi
+    
+    echo ""
+    echo "Current folder configuration:"
+    if [ -f "$CONFIG_FILE" ]; then
+        local current_account=$(grep "^account=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        echo "  Account: ${current_account:-default}"
+    else
+        echo "  Account: default (not configured)"
+    fi
+}
+
 show_current_config() {
     load_config
     local variant=$(determine_variant)
@@ -190,6 +277,7 @@ show_current_config() {
     echo "Current configuration:"
     echo "  Variant: $variant"
     echo "  Danger mode: ${SAVED_DANGER:-false}"
+    echo "  Account: ${SAVED_ACCOUNT:-default}"
     echo "  Config file: $CONFIG_FILE"
     
     if [ -f "$CONFIG_FILE" ]; then
@@ -206,13 +294,17 @@ show_current_config() {
 # --- Argument Parsing ---
 REBUILD=false
 CLEAN=false
+CLEAN_ALL=false
 INTERACTIVE_LOGIN=false
 DANGER_MODE=false
 SHELL_MODE=false
 INSTALL=false
 UNINSTALL=false
 EXPLICIT_VARIANT=""
+EXPLICIT_ACCOUNT=""
+EXPLICIT_APIKEY=""
 SHOW_VARIANTS=false
+SHOW_ACCOUNTS=false
 SHOW_CONFIG=false
 
 while [[ $# -gt 0 ]]; do
@@ -229,8 +321,28 @@ while [[ $# -gt 0 ]]; do
             EXPLICIT_VARIANT="$2"
             shift 2
             ;;
+        --account)
+            if [[ -z "$2" ]]; then
+                log_error "--account requires a value"
+                exit 1
+            fi
+            EXPLICIT_ACCOUNT="$2"
+            shift 2
+            ;;
+        --apikey)
+            if [[ -z "$2" ]]; then
+                log_error "--apikey requires a value"
+                exit 1
+            fi
+            EXPLICIT_APIKEY="$2"
+            shift 2
+            ;;
         --list-variants)
             SHOW_VARIANTS=true
+            shift
+            ;;
+        --list-accounts)
+            SHOW_ACCOUNTS=true
             shift
             ;;
         --show-config)
@@ -247,6 +359,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --clean)
             CLEAN=true
+            shift
+            ;;
+        --clean-all)
+            CLEAN_ALL=true
             shift
             ;;
         --interactive-login)
@@ -293,8 +409,19 @@ VARIANT=${EXPLICIT_VARIANT:-${SAVED_VARIANT:-$(auto_detect_variant)}}
 
 # --- Save Configuration if Explicit Options Were Provided ---
 # This must happen before early exits so that --show-config shows saved config
-if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ]; then
-    save_config "$VARIANT" "$DANGER_MODE"
+if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ] || [ -n "$EXPLICIT_ACCOUNT" ]; then
+    save_config "$VARIANT" "$DANGER_MODE" "${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+fi
+
+# --- Save API Key if Provided ---
+if [ -n "$EXPLICIT_APIKEY" ]; then
+    ACCOUNT_FOR_APIKEY="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+    save_api_key "$ACCOUNT_FOR_APIKEY" "$EXPLICIT_APIKEY"
+    
+    # If only setting API key, exit after saving
+    if [ -z "$EXPLICIT_VARIANT" ] && [ "$DANGER_MODE" = false ] && [ -z "$EXPLICIT_ACCOUNT" ] && [ "$SHOW_VARIANTS" = false ] && [ "$SHOW_ACCOUNTS" = false ] && [ "$SHOW_CONFIG" = false ] && [ "$CLEAN" = false ] && [ "$CLEAN_ALL" = false ] && [ "$REBUILD" = false ] && [ "$INSTALL" = false ] && [ "$UNINSTALL" = false ]; then
+        exit 0
+    fi
 fi
 
 # --- Handle Special Commands ---
@@ -303,8 +430,36 @@ if [ "$SHOW_VARIANTS" = true ]; then
     exit 0
 fi
 
+if [ "$SHOW_ACCOUNTS" = true ]; then
+    show_accounts
+    exit 0
+fi
+
 if [ "$SHOW_CONFIG" = true ]; then
     show_current_config
+    exit 0
+fi
+
+# --- Handle Clean All Command ---
+if [ "$CLEAN_ALL" = true ]; then
+    log_info "Cleaning up ALL claude-reactor containers..."
+    
+    # Get all claude-reactor container names
+    CLAUDE_CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep "^claude-reactor-" || true)
+    
+    if [ -n "$CLAUDE_CONTAINERS" ]; then
+        echo "$CLAUDE_CONTAINERS" | while read -r container_name; do
+            if [ -n "$container_name" ]; then
+                log_info "Stopping and removing container: $container_name"
+                docker stop "$container_name" &> /dev/null || true
+                docker rm "$container_name" &> /dev/null || true
+            fi
+        done
+        log_info "✅ All claude-reactor containers removed."
+    else
+        log_info "No claude-reactor containers found to clean up."
+    fi
+    
     exit 0
 fi
 
@@ -366,9 +521,20 @@ log_verbose "Docker found: $(docker --version)"
 
 # --- Determine Names from Early Variant Assignment ---
 IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT"
-CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT"
+
+# Create unique container name based on project path and account
+PROJECT_HASH=$(echo "$(pwd)" | shasum -a 256 | cut -c1-8)
+ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+if [ -n "$ACCOUNT_ID" ]; then
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$PROJECT_HASH-$ACCOUNT_ID"
+else
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$PROJECT_HASH"
+fi
 
 log_verbose "Using variant: $VARIANT"
+log_verbose "Project path: $(pwd)"
+log_verbose "Project hash: $PROJECT_HASH"
+log_verbose "Account: ${ACCOUNT_ID:-default}"
 log_verbose "Image name: $IMAGE_NAME"
 log_verbose "Container name: $CONTAINER_NAME"
 
@@ -468,15 +634,28 @@ else
         -v "/var/run/docker.sock:/var/run/docker.sock"
     )
     
-    # Mount host Claude config file if it exists and is valid JSON
-    if [ -f "${HOME}/.claude.json" ]; then
+    # Mount account-specific Claude config file if it exists and is valid JSON
+    ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+    if [ -n "$ACCOUNT_ID" ]; then
+        CLAUDE_CONFIG_FILE="${HOME}/.claude.${ACCOUNT_ID}.json"
+        log_verbose "Using account-specific config: $CLAUDE_CONFIG_FILE"
+    else
+        CLAUDE_CONFIG_FILE="${HOME}/.claude.json"
+        log_verbose "Using default Claude config: $CLAUDE_CONFIG_FILE"
+    fi
+    
+    if [ -f "$CLAUDE_CONFIG_FILE" ]; then
         # Create a temporary snapshot to avoid race conditions during container startup
         CLAUDE_CONFIG_SNAPSHOT="/tmp/.claude.json.$$"
-        if cp "${HOME}/.claude.json" "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null; then
+        if cp "$CLAUDE_CONFIG_FILE" "$CLAUDE_CONFIG_SNAPSHOT" 2>/dev/null; then
             # Validate the snapshot before mounting
             if command -v jq >/dev/null 2>&1 && jq empty "$CLAUDE_CONFIG_SNAPSHOT" >/dev/null 2>&1; then
                 DOCKER_RUN_ARGS+=("-v" "$CLAUDE_CONFIG_SNAPSHOT:/home/claude/.claude.json")
-                log_verbose "Mounting Claude config snapshot for authentication persistence"
+                if [ -n "$ACCOUNT_ID" ]; then
+                    log_verbose "Mounting Claude config snapshot for account '$ACCOUNT_ID'"
+                else
+                    log_verbose "Mounting Claude config snapshot for default account"
+                fi
             else
                 log_warning "Claude config snapshot has invalid JSON, skipping mount"
                 log_warning "Claude CLI will create fresh configuration in container"
@@ -485,19 +664,33 @@ else
         else
             log_warning "Could not create Claude config snapshot, skipping mount"
         fi
+    elif [ -n "$ACCOUNT_ID" ]; then
+        log_info "Account-specific config not found: $CLAUDE_CONFIG_FILE"
+        log_info "Claude CLI will prompt for login for account '$ACCOUNT_ID'"
     fi
     
     # Handle authentication method
     if [ "$INTERACTIVE_LOGIN" = true ]; then
         log_info "Using interactive UI login (--interactive-login specified)."
         log_verbose "Skipping API key authentication"
-    elif [ -f "${HOME}/.env" ]; then
-        log_info "API key file found at ~/.env. Using API key authentication."
-        DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
-        log_verbose "Added --env-file ${HOME}/.env to docker run args"
     else
-        log_info "No API key file found at ~/.env. Using interactive UI login."
-        log_verbose "Create ~/.env with ANTHROPIC_API_KEY to use API key authentication"
+        # Check for project-specific API key files first
+        ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+        PROJECT_API_KEY_FILE=$(get_api_key_file "$ACCOUNT_ID")
+        
+        if [ -f "$PROJECT_API_KEY_FILE" ]; then
+            log_info "Project-specific API key found: $PROJECT_API_KEY_FILE"
+            DOCKER_RUN_ARGS+=("--env-file" "$PROJECT_API_KEY_FILE")
+            log_verbose "Using project API key for account: ${ACCOUNT_ID:-default}"
+        elif [ -f "${HOME}/.env" ]; then
+            log_info "Global API key found: ~/.env"
+            DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
+            log_verbose "Using global ~/.env API key file"
+        else
+            log_info "No API key files found. Using interactive UI login."
+            log_verbose "Create project API key: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
+            log_verbose "Or create global ~/.env with ANTHROPIC_API_KEY=YOUR_KEY"
+        fi
     fi
     
     log_verbose "Docker run command: docker run ${DOCKER_RUN_ARGS[*]} $IMAGE_NAME"
