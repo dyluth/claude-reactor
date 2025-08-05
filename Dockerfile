@@ -45,13 +45,13 @@ ENV NODE_VERSION=20.18.0
 RUN mkdir -p $NVM_DIR && \
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 
-# Activate nvm and install Node.js, then the Claude CLI and essential Node.js tools
+# Activate nvm and install Node.js and essential Node.js tools as root
 # We do this in a single RUN command to ensure it all happens in the same shell context.
 RUN . "$NVM_DIR/nvm.sh" && \
     nvm install $NODE_VERSION && \
     nvm use $NODE_VERSION && \
     nvm alias default $NODE_VERSION && \
-    npm install -g @anthropic-ai/claude-code typescript ts-node eslint prettier
+    npm install -g typescript ts-node eslint prettier
 
 # Add the nvm-installed node and npm to the PATH for all future shell sessions
 ENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
@@ -80,6 +80,17 @@ RUN useradd -m -s /bin/bash claude && \
 RUN cp /root/.bashrc /home/claude/.bashrc && \
     cp /root/.bash_profile /home/claude/.bash_profile && \
     chown claude:claude /home/claude/.bashrc /home/claude/.bash_profile
+
+# Setup npm permissions for claude user and install Claude CLI
+RUN chown -R claude:claude $NVM_DIR
+
+USER claude
+RUN . "$NVM_DIR/nvm.sh" && \
+    nvm use $NODE_VERSION && \
+    npm install -g @anthropic-ai/claude-code && \
+    echo 'export PATH="$(npm config get prefix)/bin:$PATH"' >> /home/claude/.bashrc
+
+USER root
 
 # Set the working directory for when we connect to the container
 WORKDIR /app
