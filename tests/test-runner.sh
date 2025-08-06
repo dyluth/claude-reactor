@@ -147,14 +147,27 @@ main() {
     # Run unit tests
     if [ "$INTEGRATION_ONLY" = false ]; then
         log_info "=== Running Unit Tests ==="
+        
+        # Core function tests
         if "$SCRIPT_DIR/unit/test-functions.sh"; then
             TESTS_RUN=$((TESTS_RUN + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            log_success "Unit tests completed"
+            log_success "Core unit tests completed"
         else
             TESTS_RUN=$((TESTS_RUN + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            log_failure "Unit tests failed"
+            log_failure "Core unit tests failed"
+        fi
+        
+        # Mount settings tests
+        if "$SCRIPT_DIR/unit/test-mount-settings.sh"; then
+            TESTS_RUN=$((TESTS_RUN + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            log_success "Mount settings unit tests completed"
+        else
+            TESTS_RUN=$((TESTS_RUN + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            log_failure "Mount settings unit tests failed"
         fi
     fi
     
@@ -193,6 +206,17 @@ main() {
                 TESTS_RUN=$((TESTS_RUN + 1))
                 TESTS_FAILED=$((TESTS_FAILED + 1))
                 log_failure "Configuration persistence tests failed"
+            fi
+            
+            # Run mount settings integration tests
+            if "$SCRIPT_DIR/integration/test-mount-integration.sh"; then
+                TESTS_RUN=$((TESTS_RUN + 1))
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                log_success "Mount settings integration tests completed"
+            else
+                TESTS_RUN=$((TESTS_RUN + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                log_failure "Mount settings integration tests failed"
             fi
         fi
     fi
