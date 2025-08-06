@@ -60,9 +60,24 @@ claude-reactor/
 
 ## Authentication Methods
 
-The project supports two authentication approaches:
-- **API Key**: Via environment file (`~/.env` with `ANTHROPIC_API_KEY`)
-- **Interactive UI**: Direct login through Claude CLI (requires removing `runArgs` from devcontainer.json)
+The project supports multiple authentication approaches with account isolation:
+
+### **Account-Specific Authentication (Recommended)**
+Each Claude account gets its own isolated configuration:
+- **Default account**: When no account is specified in `.claude-reactor`
+  - Uses: `~/.claude-reactor/.default-claude.json`
+  - Container: `claude-reactor-*-default`
+  - API key: `.claude-reactor-env` (if used)
+
+- **Named accounts**: When `account=name` is specified in `.claude-reactor`
+  - Uses: `~/.claude-reactor/.name-claude.json`
+  - Container: `claude-reactor-*-name`
+  - API key: `.claude-reactor-name-env` (if used)
+
+### **Authentication Methods**
+- **OAuth (Recommended)**: Uses existing Claude CLI authentication from config files
+- **API Key**: Via project-specific environment files (`claude-reactor --apikey YOUR_KEY`)
+- **Interactive UI**: Direct login through Claude CLI (use `--interactive-login`)
 
 ## Development Workflows
 
@@ -75,6 +90,26 @@ The project supports two authentication approaches:
 ./claude-reactor --danger           # Launch Claude CLI with --dangerously-skip-permissions
 ./claude-reactor --show-config      # Check current configuration
 ./claude-reactor --list-variants    # See all available options
+```
+
+### **Multi-Account Workflow**
+```bash
+# Default account usage (no account specified)
+./claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
+
+# Work account usage
+./claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
+./claude-reactor --show-config      # Shows: Account: work
+
+# Personal account usage  
+./claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
+
+# Account-specific API key (optional)
+./claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
+
+# Switch between accounts in different projects
+cd ~/work-project && ./claude-reactor  # Uses work account if saved in .claude-reactor
+cd ~/personal-project && ./claude-reactor  # Uses personal account if saved in .claude-reactor
 ```
 
 ### **Build and Test Automation**
@@ -121,9 +156,31 @@ docker run -d --name claude-agent-go -v "$(pwd)":/app claude-reactor-go
 ```bash
 variant=go
 danger=true
+account=work
 ```
 
-This file is automatically created when you use `--variant` or `--danger` flags and stores your preferences per project directory.
+This file is automatically created when you use `--variant`, `--danger`, or `--account` flags and stores your preferences per project directory.
+
+**Configuration Options:**
+- `variant=` - Container variant (base, go, full, cloud, k8s)
+- `danger=` - Enable danger mode (true/false)
+- `account=` - Claude account to use (creates isolated authentication)
+
+### **Account-Specific Authentication Files**
+The system creates separate Claude configuration files for each account:
+
+```bash
+~/.claude-reactor/
+├── .default-claude.json       # Default account (when account= is not set)
+├── .work-claude.json          # Work account (when account=work)
+├── .personal-claude.json      # Personal account (when account=personal)
+└── .unitary-claude.json       # Unitary account (when account=unitary)
+```
+
+**Automatic Setup:**
+- First time using an account: Config is auto-copied from `~/.claude.json`
+- Each account gets isolated OAuth tokens and project settings
+- Containers are named with account: `claude-reactor-*-work`, `claude-reactor-*-personal`
 
 ## Development Philosophy & Best Practices
 

@@ -11,6 +11,8 @@
 
 set -e
 
+# CAM check what happens when account not set -should use normal ~/.claude file
+
 # --- Script Variables ---
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 VERBOSE=false
@@ -29,7 +31,7 @@ A wrapper script to manage and connect to the interactive Claude Docker environm
 
 OPTIONS:
     --variant VARIANT     Set container variant (base, go, full, cloud, k8s)
-    --account ACCOUNT     Set Claude account ID for this folder
+    --account ACCOUNT     Set Claude account for this folder (creates isolated authentication)
     --apikey APIKEY       Set API key for current account (saves to project-specific file)
     --mount PATH          Mount additional directory to /mnt/basename (can be used multiple times)
     --list-accounts       Show available Claude accounts
@@ -47,9 +49,13 @@ OPTIONS:
     --help, -h            Show this help message
 
 EXAMPLES:
+    # Basic usage
     $SCRIPT_NAME                         # Launch Claude CLI directly (uses saved config)
     $SCRIPT_NAME --variant go            # Use Go variant and save preference
+    
+    # Account management (creates isolated authentication)
     $SCRIPT_NAME --account work          # Use 'work' account for this folder
+    $SCRIPT_NAME --account personal      # Use 'personal' account for this folder
     $SCRIPT_NAME --account work --apikey sk-ant-xxx # Set API key for work account
     $SCRIPT_NAME --mount ~/Documents     # Mount ~/Documents to /mnt/Documents
     $SCRIPT_NAME --mount /tmp --mount ~/src # Mount multiple directories
@@ -63,6 +69,12 @@ EXAMPLES:
     $SCRIPT_NAME --clean                 # Remove current container and start fresh
     $SCRIPT_NAME --clean-all             # Remove ALL claude-reactor containers
     $SCRIPT_NAME --install               # Install to PATH
+
+ACCOUNT BEHAVIOR:
+    - No account specified: Uses 'default' account (~/.claude-reactor/.default-claude.json)
+    - Account specified: Creates isolated config (~/.claude-reactor/.ACCOUNT-claude.json)
+    - Each account gets separate containers: claude-reactor-*-ACCOUNT
+    - First-time setup: Auto-copies from main ~/.claude.json file
 
 EOF
 }
@@ -113,6 +125,16 @@ get_api_key_file() {
     fi
     
     echo "$env_file"
+}
+
+get_claude_account_dir() {
+    local account_id="$1"
+    if [ -n "$account_id" ] && [ "$account_id" != "default" ]; then
+        echo "${HOME}/.claude-reactor/${account_id}"
+    else
+        # For default account, use main Claude directories (no isolation)
+        echo ""
+    fi
 }
 
 # --- Configuration Functions ---
@@ -630,10 +652,50 @@ else
         --name "$CONTAINER_NAME"
         -v "$(pwd):/app"
         -v "${HOME}/.kube:/home/claude/.kube"
-        -v "${HOME}/.claude:/home/claude/.claude"
         -v "${HOME}/.gitconfig:/home/claude/.gitconfig"
         -v "/var/run/docker.sock:/var/run/docker.sock"
     )
+    
+    # Setup account-specific Claude directory structure
+    ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+    CLAUDE_ACCOUNT_DIR=$(get_claude_account_dir "$ACCOUNT_ID")
+    
+    if [ -n "$CLAUDE_ACCOUNT_DIR" ]; then
+        # Named account - use isolated directory
+        if [ ! -d "$CLAUDE_ACCOUNT_DIR" ]; then
+            log_verbose "Creating account directory: $CLAUDE_ACCOUNT_DIR"
+            mkdir -p "$CLAUDE_ACCOUNT_DIR"
+            
+            # Copy main Claude files to account directory
+            if [ -f "${HOME}/.claude.json" ]; then
+                log_verbose "Copying ~/.claude.json to account directory"
+                cp "${HOME}/.claude.json" "$CLAUDE_ACCOUNT_DIR/.claude.json"
+            fi
+            if [ -d "${HOME}/.claude" ]; then
+                log_verbose "Copying ~/.claude/ to account directory"
+                cp -r "${HOME}/.claude" "$CLAUDE_ACCOUNT_DIR/.claude"
+            fi
+        fi
+        
+        # Mount account-specific Claude files
+        if [ -f "$CLAUDE_ACCOUNT_DIR/.claude.json" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_ACCOUNT_DIR/.claude.json:/home/claude/.claude.json")
+        fi
+        if [ -d "$CLAUDE_ACCOUNT_DIR/.claude" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_ACCOUNT_DIR/.claude:/home/claude/.claude")
+        fi
+        log_verbose "Mounting account-specific Claude files from: $CLAUDE_ACCOUNT_DIR"
+    else
+        # Default account - mount main Claude files directly
+        if [ -f "${HOME}/.claude.json" ]; then
+            DOCKER_RUN_ARGS+=("-v" "${HOME}/.claude.json:/home/claude/.claude.json")
+            log_verbose "Mounting main .claude.json"
+        fi
+        if [ -d "${HOME}/.claude" ]; then
+            DOCKER_RUN_ARGS+=("-v" "${HOME}/.claude:/home/claude/.claude")
+            log_verbose "Mounting main .claude directory"
+        fi
+    fi
     
     # Add additional mount paths
     for mount_path in "${MOUNT_PATHS[@]}"; do
@@ -654,27 +716,6 @@ else
         fi
     done
     
-    # Mount main Claude config file (contains all account information)
-    CLAUDE_CONFIG_FILE="${HOME}/.claude.json"
-    ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
-    
-    if [ -f "$CLAUDE_CONFIG_FILE" ]; then
-        # Validate the config file before mounting
-        if command -v jq >/dev/null 2>&1 && jq empty "$CLAUDE_CONFIG_FILE" >/dev/null 2>&1; then
-            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_CONFIG_FILE:/home/claude/.claude.json")
-            if [ -n "$ACCOUNT_ID" ]; then
-                log_verbose "Mounting Claude config (account: $ACCOUNT_ID)"
-            else
-                log_verbose "Mounting Claude config (default account)"
-            fi
-        else
-            log_warning "Claude config has invalid JSON, skipping mount"
-            log_warning "Claude CLI will create fresh configuration in container"
-        fi
-    else
-        log_info "No Claude config found: $CLAUDE_CONFIG_FILE"
-        log_info "Claude CLI will prompt for login"
-    fi
     
     # Handle authentication method
     if [ "$INTERACTIVE_LOGIN" = true ]; then
@@ -694,8 +735,26 @@ else
             DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
             log_verbose "Using global ~/.env API key file"
         else
-            if [ -f "$CLAUDE_CONFIG_FILE" ]; then
-                log_info "No API key files found. Using existing Claude authentication from config."
+            # Check if Claude config exists for authentication
+            has_claude_config=false
+            if [ -n "$CLAUDE_ACCOUNT_DIR" ]; then
+                # Named account - check account-specific config
+                if [ -f "$CLAUDE_ACCOUNT_DIR/.claude.json" ]; then
+                    has_claude_config=true
+                fi
+            else
+                # Default account - check main config
+                if [ -f "${HOME}/.claude.json" ]; then
+                    has_claude_config=true
+                fi
+            fi
+            
+            if [ "$has_claude_config" = true ]; then
+                if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+                    log_info "No API key files found. Using existing Claude authentication for account: $ACCOUNT_ID"
+                else
+                    log_info "No API key files found. Using existing Claude authentication from config."
+                fi
                 log_verbose "Create project API key if needed: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
             else
                 log_info "No API key files found. Using interactive UI login."
@@ -750,28 +809,12 @@ log_verbose "Setting up Claude CLI configuration persistence..."
 # Ensure the container's .claude directory has proper ownership
 docker exec --user root "$CONTAINER_NAME" chown -R claude:claude /home/claude/.claude 2>/dev/null || true
 
-# Ensure mounted .claude.json file has proper ownership if it exists
-if [ -f "${HOME}/.claude.json" ]; then
-    docker exec --user root "$CONTAINER_NAME" chown claude:claude /home/claude/.claude.json 2>/dev/null || true
-fi
+# Ensure mounted .claude.json file has proper ownership if it exists  
+docker exec --user root "$CONTAINER_NAME" chown claude:claude /home/claude/.claude.json 2>/dev/null || true
 
 # Ensure project directory structure exists
 log_verbose "Setting up Claude CLI project directory structure"
 docker exec --user claude "$CONTAINER_NAME" sh -c 'mkdir -p /home/claude/.claude/projects/-app 2>/dev/null || true'
-
-# If Claude config file isn't mounted from host, create basic trust configuration
-if [ ! -f "${HOME}/.claude.json" ]; then
-    log_verbose "Creating initial Claude CLI configuration for /app directory trust"
-    docker exec --user claude "$CONTAINER_NAME" sh -c 'cat > /home/claude/.claude.json << "EOF"
-{
-  "hasTrustDialogAccepted": true,
-  "hasCompletedProjectOnboarding": true,
-  "trustedDirectories": {"/app": true}
-}
-EOF' 2>/dev/null || true
-else
-    log_verbose "Using mounted Claude config file from host"
-fi
 
 # Ensure claude user can access Docker socket
 log_verbose "Configuring Docker socket access for claude user"
@@ -785,6 +828,15 @@ docker exec --user root "$CONTAINER_NAME" sh -c '
 
 # --- Attach to the Container ---
 # By this point, the container is guaranteed to be running.
+
+# Build claude command 
+CLAUDE_CMD="claude"
+if [ "$DANGER_MODE" = true ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
+fi
+
+# Note: Claude CLI doesn't support --account flag, account selection is handled via config file
+
 if [ "$SHELL_MODE" = true ]; then
     # User explicitly requested shell access
     log_info "Launching bash shell in container"
@@ -793,11 +845,19 @@ if [ "$SHELL_MODE" = true ]; then
 elif [ "$DANGER_MODE" = true ]; then
     # User requested danger mode - launch Claude CLI with bypassed permissions
     log_info "⚠️  DANGER MODE: Launching Claude CLI with --dangerously-skip-permissions"
-    log_verbose "Connecting directly to Claude CLI with bypassed permissions"
-    docker exec -it --user claude "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+        log_verbose "Connecting directly to Claude CLI (configured for account: $ACCOUNT_ID)"
+    else
+        log_verbose "Connecting directly to Claude CLI with bypassed permissions"
+    fi
+    docker exec -it --user claude "$CONTAINER_NAME" $CLAUDE_CMD
 else
     # Default behavior - launch Claude CLI directly
     log_info "Launching Claude CLI in container"
-    log_verbose "Connecting directly to Claude CLI"
-    docker exec -it --user claude "$CONTAINER_NAME" claude
+    if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+        log_verbose "Connecting directly to Claude CLI (configured for account: $ACCOUNT_ID)"
+    else
+        log_verbose "Connecting directly to Claude CLI"
+    fi
+    docker exec -it --user claude "$CONTAINER_NAME" $CLAUDE_CMD
 fi
