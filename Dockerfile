@@ -9,7 +9,7 @@ FROM debian:bullseye-slim AS base
 # Install comprehensive development dependencies for Claude CLI
 RUN apt-get update && apt-get install -y \
     # Core system tools
-    curl git ca-certificates wget unzip gnupg2 \
+    curl git ca-certificates wget unzip gnupg2 socat \
     # Essential CLI tools for Claude
     ripgrep jq fzf nano vim less procps htop \
     # Build tools and compilers
@@ -113,12 +113,20 @@ WORKDIR /app
 # Change ownership of the app directory to claude user
 RUN chown -R claude:claude /app
 
+# --- Add and configure the entrypoint for socat proxy ---
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 # Switch to non-root user
 USER claude
 
-# This command will be executed when the container starts.
-# It keeps the container running so we can connect to it.
-CMD ["tail", "-f", "/dev/null"]
+# The entrypoint script will now handle the container's main process
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# The default command to run when the container starts.
+# This will be passed to the entrypoint script.
+CMD ["bash-with-prompt"]
+
 
 # =============================================================================
 # GO STAGE: Base + Go toolchain and utilities
