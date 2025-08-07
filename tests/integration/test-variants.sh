@@ -51,16 +51,34 @@ check_docker() {
     return 0
 }
 
+# Detect architecture for consistent naming
+detect_architecture() {
+    local arch_raw=$(uname -m)
+    case "$arch_raw" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        arm64|aarch64)
+            echo "arm64"
+            ;;
+        *)
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
 # Test building a specific variant
 test_build_variant() {
     local variant="$1"
-    local image_name="claude-reactor-$variant"
+    local architecture=$(detect_architecture)
+    local image_name="claude-reactor-$variant-$architecture"
     
-    log_info "Building variant: $variant"
+    log_info "Building variant: $variant (architecture: $architecture)"
     
     cd "$PROJECT_ROOT"
     
-    # Build the variant
+    # Build the variant with architecture detection
     if docker build --target "$variant" -t "$image_name" . > /dev/null 2>&1; then
         log_info "Build successful for variant: $variant"
         return 0
@@ -73,8 +91,9 @@ test_build_variant() {
 # Test that a container can be created and started
 test_container_lifecycle() {
     local variant="$1"
-    local image_name="claude-reactor-$variant"
-    local container_name="test-claude-agent-$variant-$$"
+    local architecture=$(detect_architecture)
+    local image_name="claude-reactor-$variant-$architecture"
+    local container_name="test-claude-agent-$variant-$architecture-$$"
     
     log_info "Testing container lifecycle for variant: $variant"
     
@@ -110,8 +129,9 @@ test_container_lifecycle() {
 # Test that expected tools are available in variant
 test_variant_tools() {
     local variant="$1"
-    local image_name="claude-reactor-$variant"
-    local container_name="test-tools-$variant-$$"
+    local architecture=$(detect_architecture)
+    local image_name="claude-reactor-$variant-$architecture"
+    local container_name="test-tools-$variant-$architecture-$$"
     
     log_info "Testing tools availability for variant: $variant"
     
@@ -127,6 +147,11 @@ test_variant_tools() {
     # Test base tools (should be in all variants)
     docker exec "$container_name" which node > /dev/null 2>&1 || success=false
     docker exec "$container_name" which python3 > /dev/null 2>&1 || success=false
+    docker exec "$container_name" which python > /dev/null 2>&1 || success=false
+    docker exec "$container_name" which pip3 > /dev/null 2>&1 || success=false
+    docker exec "$container_name" which pip > /dev/null 2>&1 || success=false
+    docker exec "$container_name" which uv > /dev/null 2>&1 || success=false
+    docker exec "$container_name" which uvx > /dev/null 2>&1 || success=false
     docker exec "$container_name" which git > /dev/null 2>&1 || success=false
     docker exec "$container_name" which ripgrep > /dev/null 2>&1 || success=false
     

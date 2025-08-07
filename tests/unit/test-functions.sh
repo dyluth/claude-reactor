@@ -49,6 +49,40 @@ create_test_functions() {
 CONFIG_FILE=".claude-reactor"
 VERBOSE=false
 
+# --- Architecture Detection Functions ---
+detect_architecture() {
+    local arch_raw=$(uname -m)
+    case "$arch_raw" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        arm64|aarch64)
+            echo "arm64"
+            ;;
+        *)
+            log_error "Unsupported architecture: $arch_raw"
+            log_error "Supported architectures: x86_64, amd64, arm64, aarch64"
+            return 1
+            ;;
+    esac
+}
+
+get_docker_platform() {
+    local arch=$(detect_architecture)
+    case "$arch" in
+        amd64)
+            echo "linux/amd64"
+            ;;
+        arm64)
+            echo "linux/arm64"
+            ;;
+        *)
+            log_error "Cannot determine Docker platform for architecture: $arch"
+            return 1
+            ;;
+    esac
+}
+
 log_verbose() {
     if [ "$VERBOSE" = true ]; then
         echo "[VERBOSE] $1"
@@ -302,6 +336,65 @@ test_config_persistence() {
     return 0
 }
 
+# Test architecture detection functionality
+test_architecture_detection() {
+    local test_dir="arch_test_$$"
+    mkdir -p "$test_dir"
+    cd "$test_dir"
+    
+    create_test_functions
+    source test-functions.sh
+    
+    # Test that detect_architecture returns valid values
+    local arch=$(detect_architecture)
+    
+    # Should return either amd64 or arm64
+    [ "$arch" = "amd64" ] || [ "$arch" = "arm64" ] || return 1
+    
+    # Test get_docker_platform function
+    local platform=$(get_docker_platform)
+    [ "$platform" = "linux/amd64" ] || [ "$platform" = "linux/arm64" ] || return 1
+    
+    # Test consistency between functions
+    if [ "$arch" = "amd64" ]; then
+        [ "$platform" = "linux/amd64" ] || return 1
+    elif [ "$arch" = "arm64" ]; then
+        [ "$platform" = "linux/arm64" ] || return 1
+    fi
+    
+    cd ..
+    rm -rf "$test_dir"
+    return 0
+}
+
+# Test container naming with architecture
+test_architecture_naming() {
+    local test_dir="naming_test_$$"
+    mkdir -p "$test_dir"
+    cd "$test_dir"
+    
+    create_test_functions
+    source test-functions.sh
+    
+    # Test that architecture is included in container names
+    local arch=$(detect_architecture)
+    
+    # Simulate the naming logic from claude-reactor
+    local base_image_name="claude-reactor"
+    local variant="go"
+    local image_name="$base_image_name-$variant-$arch"
+    
+    # Verify architecture is included
+    echo "$image_name" | grep -q "$arch" || return 1
+    
+    # Verify format is correct
+    [ "$image_name" = "claude-reactor-go-$arch" ] || return 1
+    
+    cd ..
+    rm -rf "$test_dir"
+    return 0
+}
+
 # Run all unit tests
 run_all_unit_tests() {
     log_info "Running unit tests for claude-reactor functions..."
@@ -311,6 +404,8 @@ run_all_unit_tests() {
     run_test "Variant validation" "test_variant_validation"
     run_test "Variant determination priority" "test_variant_determination"
     run_test "Configuration persistence" "test_config_persistence"
+    run_test "Architecture detection" "test_architecture_detection"
+    run_test "Architecture-aware naming" "test_architecture_naming"
     
     log_info "Unit tests completed"
 }

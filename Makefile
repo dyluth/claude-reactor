@@ -7,9 +7,26 @@ IMAGE_PREFIX ?= claude-reactor
 VARIANTS = base go full cloud k8s
 PROJECT_NAME = claude-reactor
 
+# Architecture detection
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
+    ARCHITECTURE := amd64
+    DOCKER_PLATFORM := linux/amd64
+else ifeq ($(UNAME_M),amd64)
+    ARCHITECTURE := amd64
+    DOCKER_PLATFORM := linux/amd64
+else ifeq ($(UNAME_M),arm64)
+    ARCHITECTURE := arm64
+    DOCKER_PLATFORM := linux/arm64
+else ifeq ($(UNAME_M),aarch64)
+    ARCHITECTURE := arm64
+    DOCKER_PLATFORM := linux/arm64
+else
+    $(error Unsupported architecture: $(UNAME_M). Supported: x86_64, amd64, arm64, aarch64)
+endif
+
 # Build settings
 DOCKER_BUILD_ARGS ?= --no-cache=false
-DOCKER_PLATFORM ?= linux/arm64
 BUILD_DATE = $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 GIT_COMMIT = $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION ?= latest
@@ -59,6 +76,7 @@ info: ## Show project information
 	@echo "  Version:        $(VERSION)"
 	@echo "  Git Commit:     $(GIT_COMMIT)"
 	@echo "  Build Date:     $(BUILD_DATE)"
+	@echo "  Architecture:   $(ARCHITECTURE)"
 	@echo "  Docker Platform: $(DOCKER_PLATFORM)"
 	@echo "  Variants:       $(VARIANTS)"
 	@echo ""
@@ -73,8 +91,8 @@ build-base: ## Build base container variant
 		--target base \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		-t $(IMAGE_PREFIX)-base:$(VERSION) \
-		-t $(IMAGE_PREFIX)-base:latest .
+		-t $(IMAGE_PREFIX)-base-$(ARCHITECTURE):$(VERSION) \
+		-t $(IMAGE_PREFIX)-base-$(ARCHITECTURE):latest .
 	@echo "$(GREEN)✓ Base variant built successfully$(NC)"
 
 .PHONY: build-go
@@ -85,8 +103,8 @@ build-go: ## Build Go container variant
 		--target go \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		-t $(IMAGE_PREFIX)-go:$(VERSION) \
-		-t $(IMAGE_PREFIX)-go:latest .
+		-t $(IMAGE_PREFIX)-go-$(ARCHITECTURE):$(VERSION) \
+		-t $(IMAGE_PREFIX)-go-$(ARCHITECTURE):latest .
 	@echo "$(GREEN)✓ Go variant built successfully$(NC)"
 
 .PHONY: build-full
@@ -97,8 +115,8 @@ build-full: ## Build full container variant (Go + Rust + Java + DBs)
 		--target full \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		-t $(IMAGE_PREFIX)-full:$(VERSION) \
-		-t $(IMAGE_PREFIX)-full:latest .
+		-t $(IMAGE_PREFIX)-full-$(ARCHITECTURE):$(VERSION) \
+		-t $(IMAGE_PREFIX)-full-$(ARCHITECTURE):latest .
 	@echo "$(GREEN)✓ Full variant built successfully$(NC)"
 
 .PHONY: build-cloud
@@ -109,8 +127,8 @@ build-cloud: ## Build cloud container variant (Full + cloud CLIs)
 		--target cloud \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		-t $(IMAGE_PREFIX)-cloud:$(VERSION) \
-		-t $(IMAGE_PREFIX)-cloud:latest .
+		-t $(IMAGE_PREFIX)-cloud-$(ARCHITECTURE):$(VERSION) \
+		-t $(IMAGE_PREFIX)-cloud-$(ARCHITECTURE):latest .
 	@echo "$(GREEN)✓ Cloud variant built successfully$(NC)"
 
 .PHONY: build-k8s
@@ -121,8 +139,8 @@ build-k8s: ## Build Kubernetes container variant (Full + K8s tools)
 		--target k8s \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
-		-t $(IMAGE_PREFIX)-k8s:$(VERSION) \
-		-t $(IMAGE_PREFIX)-k8s:latest .
+		-t $(IMAGE_PREFIX)-k8s-$(ARCHITECTURE):$(VERSION) \
+		-t $(IMAGE_PREFIX)-k8s-$(ARCHITECTURE):latest .
 	@echo "$(GREEN)✓ Kubernetes variant built successfully$(NC)"
 
 .PHONY: build-all
@@ -327,8 +345,8 @@ benchmark: build-all ## Run container size and performance benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	@echo "Container sizes:"
 	@for variant in $(VARIANTS); do \
-		if docker image inspect $(IMAGE_PREFIX)-$$variant:latest >/dev/null 2>&1; then \
-			size=$$(docker image inspect $(IMAGE_PREFIX)-$$variant:latest --format='{{.Size}}' | numfmt --to=iec) ; \
+		if docker image inspect $(IMAGE_PREFIX)-$$variant-$(ARCHITECTURE):latest >/dev/null 2>&1; then \
+			size=$$(docker image inspect $(IMAGE_PREFIX)-$$variant-$(ARCHITECTURE):latest --format='{{.Size}}' | numfmt --to=iec) ; \
 			printf "  %-8s %s\n" "$$variant:" "$$size" ; \
 		fi \
 	done
@@ -340,9 +358,9 @@ security-scan: ## Run security scans on containers (requires trivy)
 	@echo "$(BLUE)Running security scans...$(NC)"
 	@if command -v trivy >/dev/null 2>&1; then \
 		for variant in base go full; do \
-			if docker image inspect $(IMAGE_PREFIX)-$$variant:latest >/dev/null 2>&1; then \
+			if docker image inspect $(IMAGE_PREFIX)-$$variant-$(ARCHITECTURE):latest >/dev/null 2>&1; then \
 				echo "Scanning $$variant variant..." ; \
-				trivy image --exit-code 0 $(IMAGE_PREFIX)-$$variant:latest ; \
+				trivy image --exit-code 0 $(IMAGE_PREFIX)-$$variant-$(ARCHITECTURE):latest ; \
 			fi ; \
 		done ; \
 		echo "$(GREEN)✓ Security scans completed$(NC)" ; \
