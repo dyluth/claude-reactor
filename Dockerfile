@@ -7,9 +7,10 @@
 FROM debian:bullseye-slim AS base
 
 # Install comprehensive development dependencies for Claude CLI
+# The # bust-cache comment is added to force a re-run of this layer
 RUN apt-get update && apt-get install -y \
-    # Core system tools
-    curl git ca-certificates wget unzip gnupg2 socat \
+    # Core system tools # bust-cache
+    curl git ca-certificates wget unzip gnupg2 socat sudo \
     # Essential CLI tools for Claude
     ripgrep jq fzf nano vim less procps htop \
     # Build tools and compilers
@@ -30,11 +31,13 @@ RUN ARCH=$(dpkg --print-architecture) && \
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${KUBE_ARCH}/kubectl" && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
-# Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+# Install GitHub CLI using the recommended method
+RUN type -p curl >/dev/null || (apt-get update && apt-get install curl -y) && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+    apt-get update && \
+    apt-get install gh -y
 
 # Install Docker CLI (for connecting to host Docker daemon)
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
@@ -124,8 +127,8 @@ USER claude
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # The default command to run when the container starts.
-# This will be passed to the entrypoint script.
-CMD ["bash-with-prompt"]
+# This keeps the container alive in detached mode.
+CMD ["tail", "-f", "/dev/null"]
 
 
 # =============================================================================
