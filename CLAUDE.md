@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This project creates a modular Docker containerization system for Claude CLI with multiple specialized variants:
 
 ### **Container Variants:**
-- **base**: Node.js, Python, basic development tools (smallest, ~500MB)
+- **base**: Node.js, Python (with pip + uv), basic development tools (smallest, ~500MB)
 - **go**: Base + Go toolchain and development utilities (~800MB)  
 - **full**: Go + Rust, Java, database clients (~1.2GB)
 - **cloud**: Full + AWS/GCP/Azure CLIs (~1.5GB)

@@ -22,7 +22,12 @@ RUN apt-get update && apt-get install -y \
 RUN git clone https://github.com/jimeh/git-aware-prompt.git /usr/local/git-aware-prompt
 
 # --- Install kubectl and GitHub CLI ---
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl" && \
+# Detect architecture and set the appropriate kubectl binary URL
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then KUBE_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then KUBE_ARCH="amd64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${KUBE_ARCH}/kubectl" && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
 # Install GitHub CLI
@@ -56,6 +61,14 @@ RUN . "$NVM_DIR/nvm.sh" && \
 # Add the nvm-installed node and npm to the PATH for all future shell sessions
 ENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
 
+# --- Install uv (modern Python package manager) and create Python symlinks ---
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv && \
+    mv /root/.local/bin/uvx /usr/local/bin/uvx && \
+    ln -sf /usr/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip && \
+    rm -rf /root/.local
+
 # --- Configure git-aware-prompt ---
 # Add to both .bashrc and .bash_profile to ensure it loads in all contexts
 RUN echo 'export GITAWAREPROMPT=/usr/local/git-aware-prompt' >> /root/.bashrc && \
@@ -76,9 +89,11 @@ RUN useradd -m -s /bin/bash claude && \
     usermod -aG sudo claude && \
     echo 'claude ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# Copy bashrc configuration to the claude user
+# Copy bashrc configuration to the claude user and clean up uv references
 RUN cp /root/.bashrc /home/claude/.bashrc && \
     cp /root/.bash_profile /home/claude/.bash_profile && \
+    sed -i '/\$HOME\/\.local\/bin\/env/d' /home/claude/.bashrc && \
+    sed -i '/\$HOME\/\.local\/bin\/env/d' /home/claude/.bash_profile && \
     chown claude:claude /home/claude/.bashrc /home/claude/.bash_profile
 
 # Setup npm permissions for claude user and install Claude CLI
@@ -110,9 +125,16 @@ CMD ["tail", "-f", "/dev/null"]
 # =============================================================================
 FROM base AS go
 
+# Switch to root for installations
+USER root
+
 # Install Go
 ENV GO_VERSION=1.21.6
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" | tar -xz -C /usr/local
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then GO_ARCH="amd64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" | tar -xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 
 # Install Go development tools
@@ -188,7 +210,11 @@ FROM full AS cloud
 USER root
 
 # Install AWS CLI v2
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" && \
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then AWS_ARCH="aarch64"; \
+    elif [ "$ARCH" = "amd64" ]; then AWS_ARCH="x86_64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \
     rm -rf aws awscliv2.zip
@@ -204,7 +230,11 @@ RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 # Install Terraform
 ENV TERRAFORM_VERSION=1.6.6
-RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_arm64.zip" -o terraform.zip && \
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then TF_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then TF_ARCH="amd64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TF_ARCH}.zip" -o terraform.zip && \
     unzip terraform.zip && \
     mv terraform /usr/local/bin/ && \
     rm terraform.zip
@@ -228,11 +258,19 @@ RUN curl https://baltocdn.com/helm/signing.asc | apt-key add - && \
 
 # Install k9s
 ENV K9S_VERSION=v0.29.1
-RUN curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_arm64.tar.gz" | tar -xz -C /usr/local/bin
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then K9S_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then K9S_ARCH="x86_64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin
 
 # Install kubectx and kubens
-RUN curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubectx_linux_arm64.tar.gz" | tar -xz -C /usr/local/bin kubectx && \
-    curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubens_linux_arm64.tar.gz" | tar -xz -C /usr/local/bin kubens
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then KUBE_UTILS_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then KUBE_UTILS_ARCH="x86_64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubectx_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubectx && \
+    curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubens_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubens
 
 # Install kustomize
 RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash && \
@@ -240,7 +278,11 @@ RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/
 
 # Install stern (log tailing)
 ENV STERN_VERSION=1.28.0
-RUN curl -fsSL "https://github.com/stern/stern/releases/download/v${STERN_VERSION}/stern_${STERN_VERSION}_linux_arm64.tar.gz" | tar -xz -C /usr/local/bin stern
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then STERN_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then STERN_ARCH="amd64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/stern/stern/releases/download/v${STERN_VERSION}/stern_${STERN_VERSION}_linux_${STERN_ARCH}.tar.gz" | tar -xz -C /usr/local/bin stern
 
 # Switch back to claude user
 USER claude

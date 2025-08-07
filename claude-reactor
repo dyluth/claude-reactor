@@ -22,6 +22,40 @@ BASE_IMAGE_NAME="claude-reactor"
 BASE_CONTAINER_NAME="claude-reactor"
 CONFIG_FILE=".claude-reactor"
 
+# --- Architecture Detection Functions ---
+detect_architecture() {
+    local arch_raw=$(uname -m)
+    case "$arch_raw" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        arm64|aarch64)
+            echo "arm64"
+            ;;
+        *)
+            log_error "Unsupported architecture: $arch_raw"
+            log_error "Supported architectures: x86_64, amd64, arm64, aarch64"
+            return 1
+            ;;
+    esac
+}
+
+get_docker_platform() {
+    local arch=$(detect_architecture)
+    case "$arch" in
+        amd64)
+            echo "linux/amd64"
+            ;;
+        arm64)
+            echo "linux/arm64"
+            ;;
+        *)
+            log_error "Cannot determine Docker platform for architecture: $arch"
+            return 1
+            ;;
+    esac
+}
+
 # --- Helper Functions ---
 show_usage() {
     cat << EOF
@@ -291,7 +325,7 @@ show_variants() {
     cat << EOF
 Available container variants:
 
-  base   - Node.js, Python, basic development tools (smallest)
+  base   - Node.js, Python (pip + uv), basic development tools (smallest)
   go     - Base + Go toolchain and utilities
   full   - Go + Rust, Java, database clients
   cloud  - Full + AWS/GCP/Azure CLIs
@@ -346,9 +380,13 @@ show_accounts() {
 show_current_config() {
     load_config
     local variant=$(determine_variant)
+    local architecture=$(detect_architecture)
+    local docker_platform=$(get_docker_platform)
     
     echo "Current configuration:"
     echo "  Variant: $variant"
+    echo "  Architecture: $architecture"
+    echo "  Docker platform: $docker_platform"
     echo "  Danger mode: ${SAVED_DANGER:-false}"
     echo "  Account: ${SAVED_ACCOUNT:-default}"
     echo "  Config file: $CONFIG_FILE"
@@ -601,19 +639,31 @@ fi
 
 log_verbose "Docker found: $(docker --version)"
 
-# --- Determine Names from Early Variant Assignment ---
-IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT"
+# --- Architecture Detection ---
+ARCHITECTURE=$(detect_architecture)
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+DOCKER_PLATFORM=$(get_docker_platform)
+if [ $? -ne 0 ]; then
+    exit 1
+fi
 
-# Create unique container name based on project path and account
+# --- Determine Names from Early Variant Assignment ---
+IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT-$ARCHITECTURE"
+
+# Create unique container name based on project path, account, and architecture
 PROJECT_HASH=$(echo "$(pwd)" | shasum -a 256 | cut -c1-8)
 ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
 if [ -n "$ACCOUNT_ID" ]; then
-    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$PROJECT_HASH-$ACCOUNT_ID"
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$ARCHITECTURE-$PROJECT_HASH-$ACCOUNT_ID"
 else
-    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$PROJECT_HASH"
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$ARCHITECTURE-$PROJECT_HASH"
 fi
 
 log_verbose "Using variant: $VARIANT"
+log_verbose "Architecture: $ARCHITECTURE"
+log_verbose "Docker platform: $DOCKER_PLATFORM"
 log_verbose "Project path: $(pwd)"
 log_verbose "Project hash: $PROJECT_HASH"
 log_verbose "Account: ${ACCOUNT_ID:-default}"
