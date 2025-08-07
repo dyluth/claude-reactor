@@ -450,9 +450,6 @@ fi
 if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     log_info "Creating and starting new container '${CONTAINER_NAME}'..."
     
-    USER_UID=$(id -u)
-    USER_GID=$(id -g)
-    
     DOCKER_RUN_ARGS=(
         -d
         --name "$CONTAINER_NAME"
@@ -460,7 +457,6 @@ if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         -v "${HOME}/.kube:/home/claude/.kube:ro"
         -v "${HOME}/.gitconfig:/home/claude/.gitconfig:ro"
         -v "/var/run/docker.sock:/var/run/docker.sock"
-        # The --user flag is set in the Dockerfile, not here.
     )
     
     # ... (rest of the mounting and auth logic remains the same)
@@ -528,12 +524,15 @@ if [ "$DANGER_MODE" = true ]; then
     CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
 fi
 
-# The container's entrypoint.sh handles user and docker socket setup.
-# We can now exec directly without specifying the user.
+# The entrypoint.sh handles user and docker socket setup.
+# We must explicitly set the DOCKER_HOST env var for the exec session
+# so it uses the socat proxy.
+DOCKER_EXEC_CMD="docker exec -it -e DOCKER_HOST=unix:///home/claude/docker.sock"
+
 if [ "$SHELL_MODE" = true ]; then
     log_info "Launching bash shell in container..."
-    docker exec -it "$CONTAINER_NAME" bash-with-prompt
+    $DOCKER_EXEC_CMD "$CONTAINER_NAME" bash-with-prompt
 else
     log_info "Launching Claude CLI in container..."
-    docker exec -it "$CONTAINER_NAME" $CLAUDE_CMD
+    $DOCKER_EXEC_CMD "$CONTAINER_NAME" $CLAUDE_CMD
 fi
