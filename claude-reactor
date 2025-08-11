@@ -20,6 +20,12 @@ BASE_IMAGE_NAME="claude-reactor"
 BASE_CONTAINER_NAME="claude-reactor"
 CONFIG_FILE=".claude-reactor"
 
+# Registry configuration
+DEFAULT_REGISTRY="ghcr.io/dyluth/claude-reactor"
+CLAUDE_REACTOR_REGISTRY="${CLAUDE_REACTOR_REGISTRY:-$DEFAULT_REGISTRY}"
+CLAUDE_REACTOR_USE_REGISTRY="${CLAUDE_REACTOR_USE_REGISTRY:-true}"
+CLAUDE_REACTOR_TAG="${CLAUDE_REACTOR_TAG:-latest}"
+
 # --- Architecture Detection Functions ---
 detect_architecture() {
     local arch_raw=$(uname -m)
@@ -76,6 +82,10 @@ OPTIONS:
     --clean-all           Remove ALL claude-reactor containers
     --danger              Launch Claude CLI with --dangerously-skip-permissions
     --shell               Launch bash shell instead of Claude CLI directly
+    --dev                 Force local build (disable registry pulls)
+    --registry-off        Disable registry completely
+    --pull-latest         Force pull latest from registry
+    --continue [true|false]  Enable/disable conversation continuation (default: true)
     --install             Install claude-reactor to /usr/local/bin (requires sudo)
     --uninstall           Remove claude-reactor from /usr/local/bin (requires sudo)
     --verbose, -v         Enable verbose output
@@ -101,6 +111,10 @@ EXAMPLES:
     $SCRIPT_NAME --rebuild               # Force rebuild current variant
     $SCRIPT_NAME --clean                 # Remove current container and start fresh
     $SCRIPT_NAME --clean-all             # Remove ALL claude-reactor containers
+    $SCRIPT_NAME --dev                   # Force local build (disable registry)
+    $SCRIPT_NAME --registry-off          # Disable registry completely
+    $SCRIPT_NAME --pull-latest           # Force pull latest from registry
+    $SCRIPT_NAME --continue false        # Disable conversation continuation
     $SCRIPT_NAME --install               # Install to PATH
 
 ACCOUNT BEHAVIOR:
@@ -385,13 +399,25 @@ show_current_config() {
     echo "  Danger mode: ${SAVED_DANGER:-false}"
     echo "  Account: ${SAVED_ACCOUNT:-default}"
     echo "  Config file: $CONFIG_FILE"
+    echo ""
+    echo "Registry configuration:"
+    echo "  Registry: $CLAUDE_REACTOR_REGISTRY"
+    echo "  Use registry: $CLAUDE_REACTOR_USE_REGISTRY"
+    echo "  Tag: $CLAUDE_REACTOR_TAG"
+    echo "  Dev mode: ${DEV_MODE:-false}"
+    echo "  Registry disabled: ${REGISTRY_OFF:-false}"
+    echo "  Continue mode: ${CONTINUE_MODE:-true}"
     
     if [ -f "$CONFIG_FILE" ]; then
+        echo ""
+        echo "Project configuration:"
         echo "  Status: Configuration saved"
         echo ""
         echo "Raw config file:"
         cat "$CONFIG_FILE" | sed 's/^/    /'
     else
+        echo ""
+        echo "Project configuration:"
         echo "  Status: No saved configuration (auto-detecting)"
         echo "  Auto-detected: $(auto_detect_variant)"
     fi
@@ -406,6 +432,10 @@ DANGER_MODE=false
 SHELL_MODE=false
 INSTALL=false
 UNINSTALL=false
+DEV_MODE=false
+REGISTRY_OFF=false
+PULL_LATEST=false
+CONTINUE_MODE=true  # Default to true for conversation continuation
 EXPLICIT_VARIANT=""
 EXPLICIT_ACCOUNT=""
 EXPLICIT_APIKEY=""
@@ -491,6 +521,39 @@ while [[ $# -gt 0 ]]; do
         --shell)
             SHELL_MODE=true
             shift
+            ;;
+        --dev)
+            DEV_MODE=true
+            shift
+            ;;
+        --registry-off)
+            REGISTRY_OFF=true
+            shift
+            ;;
+        --pull-latest)
+            PULL_LATEST=true
+            shift
+            ;;
+        --continue)
+            if [[ -n "$2" && "$2" != --* ]]; then
+                case "$2" in
+                    true|TRUE|yes|YES|1)
+                        CONTINUE_MODE=true
+                        ;;
+                    false|FALSE|no|NO|0)
+                        CONTINUE_MODE=false
+                        ;;
+                    *)
+                        log_error "--continue requires 'true' or 'false'"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+            else
+                # If no argument provided, default to true
+                CONTINUE_MODE=true
+                shift
+            fi
             ;;
         --install)
             INSTALL=true
@@ -644,6 +707,57 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# --- Registry Functions ---
+should_use_registry() {
+    if [ "$DEV_MODE" = true ] || [ "$REGISTRY_OFF" = true ]; then
+        return 1  # Don't use registry
+    fi
+    if [ "$CLAUDE_REACTOR_USE_REGISTRY" != "true" ]; then
+        return 1  # Don't use registry
+    fi
+    return 0  # Use registry
+}
+
+get_registry_image_name() {
+    local variant="$1"
+    echo "$CLAUDE_REACTOR_REGISTRY-$variant:$CLAUDE_REACTOR_TAG"
+}
+
+get_local_image_name() {
+    local variant="$1"
+    echo "$BASE_IMAGE_NAME-$variant-$ARCHITECTURE"
+}
+
+try_pull_from_registry() {
+    local variant="$1"
+    local registry_image=$(get_registry_image_name "$variant")
+    local local_image=$(get_local_image_name "$variant")
+    
+    if ! should_use_registry; then
+        log_verbose "Registry disabled, skipping pull"
+        return 1
+    fi
+    
+    log_info "Attempting to pull $variant variant from registry..."
+    log_verbose "Registry image: $registry_image"
+    
+    if docker pull "$registry_image" >/dev/null 2>&1; then
+        # Tag the pulled image with local naming convention
+        docker tag "$registry_image" "$local_image:latest" >/dev/null 2>&1
+        docker tag "$registry_image" "$local_image" >/dev/null 2>&1
+        log_info "✅ Successfully pulled $variant variant from registry"
+        return 0
+    else
+        log_info "❌ Failed to pull from registry, will build locally"
+        return 1
+    fi
+}
+
+image_exists_locally() {
+    local image_name="$1"
+    docker image inspect "$image_name" >/dev/null 2>&1
+}
+
 # --- Determine Names from Early Variant Assignment ---
 IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT-$ARCHITECTURE"
 
@@ -692,18 +806,42 @@ if [ "$CLEAN" = true ]; then
 fi
 
 # --- Image Build Check ---
-# If the image doesn't exist or rebuild is requested, build it
-if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
+# Try registry first, then fallback to local build if needed
+IMAGE_READY=false
+
+# Force pull if requested
+if [ "$PULL_LATEST" = true ]; then
+    log_info "Force pulling latest image from registry..."
+    docker rmi "$IMAGE_NAME" &> /dev/null || true
+fi
+
+# If rebuild is requested, clean up first
+if [ "$REBUILD" = true ]; then
+    log_info "Rebuilding Docker image '$IMAGE_NAME'..."
+    log_verbose "Removing existing image"
+    docker rmi "$IMAGE_NAME" &> /dev/null || true
+fi
+
+# Check if image exists locally
+if [ "$REBUILD" = false ] && image_exists_locally "$IMAGE_NAME"; then
+    log_verbose "Docker image '$IMAGE_NAME' already exists locally."
+    IMAGE_READY=true
+else
+    # Try to pull from registry first
+    if [ "$REBUILD" = false ] && try_pull_from_registry "$VARIANT"; then
+        IMAGE_READY=true
+    fi
+fi
+
+# If we don't have the image yet, build it locally
+if [ "$IMAGE_READY" = false ]; then
     if [ "$REBUILD" = true ]; then
-        log_info "Rebuilding Docker image '$IMAGE_NAME'..."
-        log_verbose "Removing existing image"
-        docker rmi "$IMAGE_NAME" &> /dev/null || true
+        log_info "Rebuilding image locally..."
     else
-        log_info "Docker image '$IMAGE_NAME' not found."
+        log_info "Building Docker image '$IMAGE_NAME' locally..."
     fi
     
     if [ -f "Dockerfile" ]; then
-        log_info "Dockerfile found in current directory. Building the image..."
         log_info "Building variant: $VARIANT"
         if [ "$VERBOSE" = true ]; then
             docker build --target "$VARIANT" -t "$IMAGE_NAME" .
@@ -716,12 +854,17 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; t
             exit 1
         fi
         log_info "Image '$IMAGE_NAME' (variant: $VARIANT) built successfully."
+        IMAGE_READY=true
     else
         log_error "Dockerfile not found. Please run '$SCRIPT_NAME' from the project root once to build the image."
         exit 1
     fi
-else
-    log_verbose "Docker image '$IMAGE_NAME' already exists."
+fi
+
+# Final verification
+if [ "$IMAGE_READY" = false ]; then
+    log_error "Failed to obtain Docker image '$IMAGE_NAME'."
+    exit 1
 fi
 
 # --- Container Lifecycle Management ---
@@ -917,6 +1060,9 @@ done
 CLAUDE_CMD="claude"
 if [ "$DANGER_MODE" = true ]; then
     CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
+fi
+if [ "$CONTINUE_MODE" = true ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --continue"
 fi
 
 # The entrypoint.sh handles user and docker socket setup.

@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Value Propositions**:
 - **Zero Configuration**: Auto-detects project type and sets up appropriate development environment
+- **Registry Integration**: Automatically pulls pre-built images from GitHub Container Registry for instant startup
 - **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows  
 - **Professional Automation**: Makefile + script integration for both development and CI/CD
 - **Persistent Intelligence**: Remembers your preferences and configurations per project
@@ -36,6 +37,8 @@ This project creates a modular Docker containerization system for Claude CLI wit
 - **Auto-detection**: Detects project type (go.mod → go variant, etc.)
 - **Persistent preferences**: `.claude-reactor` file saves variant choice
 - **Danger mode persistence**: Remembers `--danger` flag preference per project
+- **Registry-first**: Attempts to pull from ghcr.io, falls back to local builds
+- **Development mode**: `--dev` flag forces local builds for development
 
 ## Current Project Structure
 
@@ -43,10 +46,14 @@ This project creates a modular Docker containerization system for Claude CLI wit
 claude-reactor/
 ├── claude-reactor              # Main script - intelligent container management
 ├── Dockerfile                  # Multi-stage container definitions
-├── Makefile                   # Professional build automation (25+ targets)
+├── Makefile                   # Professional build automation (30+ targets)
+├── VERSION                    # Semantic version file (v0.1.0)
 ├── CLAUDE.md                  # This file - project guidance
 ├── WORKFLOW.md                # Tool responsibilities and usage patterns
 ├── ROADMAP.md                 # Future enhancements and prioritization
+├── .github/                   # CI/CD automation
+│   └── workflows/
+│       └── build-and-push.yml # Multi-architecture builds and registry pushes
 ├── tests/                     # Comprehensive test suite
 │   ├── test-runner.sh         # Main test orchestrator
 │   ├── demo.sh                # Interactive feature demonstration
@@ -83,13 +90,18 @@ Each Claude account gets its own isolated configuration:
 
 ### **Primary Development Workflow (Recommended)**
 ```bash
-# Smart container management - auto-detects project type
-./claude-reactor                    # Launch Claude CLI directly (uses saved config)
+# Smart container management - auto-detects project type and pulls from registry
+./claude-reactor                    # Launch Claude CLI directly (registry-first, local fallback)
 ./claude-reactor --variant go       # Set specific variant and save preference
 ./claude-reactor --shell            # Launch bash shell instead of Claude CLI
 ./claude-reactor --danger           # Launch Claude CLI with --dangerously-skip-permissions
 ./claude-reactor --show-config      # Check current configuration
 ./claude-reactor --list-variants    # See all available options
+
+# Registry control
+./claude-reactor --dev              # Force local build (disable registry)
+./claude-reactor --pull-latest      # Force pull latest from registry
+./claude-reactor --registry-off     # Disable registry completely
 ```
 
 ### **Multi-Account Workflow**
@@ -121,6 +133,11 @@ make test                          # Run complete test suite (unit + integration
 make demo                          # Interactive feature demonstration
 make run-go                        # Quick container startup (delegates to claude-reactor)
 make clean-all                     # Complete cleanup
+
+# Registry management
+make push-all                      # Build and push core variants to registry
+make pull-all                      # Pull core variants from registry
+make registry-login                # Log in to container registry
 ```
 
 ### **Typical Development Session**
@@ -128,7 +145,7 @@ make clean-all                     # Complete cleanup
 # 1. Navigate to project directory
 cd my-go-project
 
-# 2. Start development container (auto-detects Go, saves preference)
+# 2. Start development container (auto-detects Go, pulls from registry if available)
 make run                           # or ./claude-reactor
 
 # 3. Work in container with full Go toolchain
@@ -139,11 +156,31 @@ make test-unit                     # Quick validation (5 seconds)
 make clean-containers              # or ./claude-reactor --clean
 ```
 
+### **Registry-Enabled Workflows**
+```bash
+# Standard usage (registry-first, local fallback)
+./claude-reactor                   # Pulls from ghcr.io/dyluth/claude-reactor automatically
+
+# Development workflows
+./claude-reactor --dev             # Force local build for development/testing
+./claude-reactor --pull-latest     # Ensure you have the newest image
+
+# CI/CD and maintenance
+make pull-all                      # Pull all variants from registry
+make push-all                      # Build and push to registry (requires auth)
+make registry-login                # Login to GitHub Container Registry
+```
+
 ### **Advanced Usage**
 ```bash
 # Force specific configurations
 ./claude-reactor --variant cloud --danger    # Cloud tools + skip permissions
 ./claude-reactor --rebuild                   # Force image rebuild
+
+# Registry management
+./claude-reactor --dev                       # Force local build (disable registry)
+./claude-reactor --registry-off              # Disable registry completely
+./claude-reactor --pull-latest               # Force pull latest from registry
 
 # Manual Docker control (rarely needed)
 docker build --target go -t claude-reactor-go .
@@ -166,6 +203,27 @@ This file is automatically created when you use `--variant`, `--danger`, or `--a
 - `danger=` - Enable danger mode (true/false)
 - `account=` - Claude account to use (creates isolated authentication)
 
+### **Container Registry Configuration**
+
+Claude-Reactor automatically pulls pre-built images from GitHub Container Registry for faster startup times.
+
+**Registry Settings:**
+```bash
+# Environment variables (optional)
+export CLAUDE_REACTOR_REGISTRY="ghcr.io/dyluth/claude-reactor"  # Default registry
+export CLAUDE_REACTOR_USE_REGISTRY=true                        # Enable registry (default: true)
+export CLAUDE_REACTOR_TAG=latest                               # Image tag (default: latest)
+```
+
+**Registry Behavior:**
+- **Default**: Attempts to pull from `ghcr.io/dyluth/claude-reactor` first
+- **Fallback**: Builds locally if registry pull fails
+- **Development**: Use `--dev` flag to force local builds
+- **Public Images**: No authentication required for pulls
+- **Multi-arch**: Supports both ARM64 (M1 Macs) and AMD64 architectures
+- **Versioning**: Supports `latest`, `v0.1.0`, and `dev` tags
+- **CI/CD Integration**: Automatic builds on git push and tags
+
 ### **Account-Specific Authentication Files**
 The system creates separate Claude configuration files for each account:
 
@@ -181,6 +239,58 @@ The system creates separate Claude configuration files for each account:
 - First time using an account: Config is auto-copied from `~/.claude.json`
 - Each account gets isolated OAuth tokens and project settings
 - Containers are named with account: `claude-reactor-*-work`, `claude-reactor-*-personal`
+
+## CI/CD and Release Management
+
+### **GitHub Actions Integration**
+Claude-Reactor includes comprehensive CI/CD automation through GitHub Actions:
+
+**Automatic Triggers:**
+- **Push to main**: Builds and pushes `latest` images
+- **Create tag `v*`**: Builds and pushes version-tagged images (e.g., `v0.1.0`)
+- **Pull requests**: Builds and tests without pushing
+- **Manual dispatch**: Supports `dev` tag builds
+
+**Multi-Architecture Builds:**
+- Builds for both `linux/amd64` and `linux/arm64`
+- Uses Docker Buildx for efficient cross-platform compilation
+- Leverages GitHub Actions build cache for speed
+
+**Security and Quality:**
+- Trivy security scanning on core variants
+- Integration tests with registry images
+- SARIF upload to GitHub Security tab
+
+### **Release Workflow**
+```bash
+# Create and push a new release
+echo "v0.2.0" > VERSION
+git add VERSION
+git commit -m "Release v0.2.0"
+git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+
+# GitHub Actions will automatically:
+# 1. Build all variants for both architectures
+# 2. Push to ghcr.io/dyluth/claude-reactor-*:v0.2.0
+# 3. Push to ghcr.io/dyluth/claude-reactor-*:latest
+# 4. Run security scans
+# 5. Create GitHub release (if configured)
+```
+
+### **Manual Registry Management**
+```bash
+# Login to GitHub Container Registry
+echo $GITHUB_TOKEN | docker login ghcr.io -u dyluth --password-stdin
+
+# Build and push manually (if needed)
+make push-all                      # Core variants (base, go, full)
+make push-extended                 # All variants including cloud/k8s
+
+# Pull specific versions
+CLAUDE_REACTOR_TAG=v0.1.0 ./claude-reactor --pull-latest
+```
 
 ## Development Philosophy & Best Practices
 
@@ -239,10 +349,12 @@ This project demonstrates effective Claude-Human collaboration patterns:
 
 **Key Achievements**:
 - ✅ **Zero-friction setup**: Auto-detection eliminates configuration overhead
+- ✅ **Registry integration**: Automatic pulls from GitHub Container Registry with local fallback
 - ✅ **Language ecosystem support**: Go, Rust, Java, Python, Node.js, cloud tools
-- ✅ **Professional automation**: 25+ Makefile targets for all workflows
+- ✅ **Professional automation**: 30+ Makefile targets including registry management
+- ✅ **CI/CD pipeline**: Multi-architecture builds, security scanning, automated releases
 - ✅ **Comprehensive testing**: Unit, integration, and demo validation
 - ✅ **Smart persistence**: Remembers preferences without manual configuration
 - ✅ **Production architecture**: Multi-stage builds, security best practices, efficient resource usage
 
-**Ready for**: Personal projects, team development, educational use, and foundation for enterprise development workflows.
+**Ready for**: Personal projects, team development, educational use, enterprise development workflows, and public distribution via container registry.
