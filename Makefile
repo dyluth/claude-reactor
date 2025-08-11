@@ -2,8 +2,9 @@
 # Comprehensive build and test automation for the Docker containerization system
 
 # Configuration
-DOCKER_REGISTRY ?= 
+DOCKER_REGISTRY ?= ghcr.io/dyluth
 IMAGE_PREFIX ?= claude-reactor
+REMOTE_IMAGE_PREFIX = $(DOCKER_REGISTRY)/$(IMAGE_PREFIX)
 VARIANTS = base go full cloud k8s
 PROJECT_NAME = claude-reactor
 
@@ -337,6 +338,110 @@ ci-build: build-all ## Build core variants for CI
 .PHONY: ci-full
 ci-full: ci-build ci-test ## Complete CI pipeline
 	@echo "$(GREEN)✓ CI pipeline completed$(NC)"
+
+##@ Registry Management
+
+.PHONY: registry-login
+registry-login: ## Log in to the Docker registry
+	@echo "$(BLUE)Logging in to $(DOCKER_REGISTRY)...$(NC)"
+	@docker login $(DOCKER_REGISTRY)
+	@echo "$(GREEN)✓ Registry login completed$(NC)"
+
+.PHONY: push-base
+push-base: build-base registry-login ## Build and push base variant to registry
+	@echo "$(BLUE)Pushing base variant to registry...$(NC)"
+	@docker tag $(IMAGE_PREFIX)-base-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-base:latest
+	@docker tag $(IMAGE_PREFIX)-base-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-base:$(VERSION)
+	@docker push $(REMOTE_IMAGE_PREFIX)-base:latest
+	@docker push $(REMOTE_IMAGE_PREFIX)-base:$(VERSION)
+	@echo "$(GREEN)✓ Base variant pushed to registry$(NC)"
+
+.PHONY: push-go
+push-go: build-go registry-login ## Build and push Go variant to registry
+	@echo "$(BLUE)Pushing Go variant to registry...$(NC)"
+	@docker tag $(IMAGE_PREFIX)-go-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-go:latest
+	@docker tag $(IMAGE_PREFIX)-go-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-go:$(VERSION)
+	@docker push $(REMOTE_IMAGE_PREFIX)-go:latest
+	@docker push $(REMOTE_IMAGE_PREFIX)-go:$(VERSION)
+	@echo "$(GREEN)✓ Go variant pushed to registry$(NC)"
+
+.PHONY: push-full
+push-full: build-full registry-login ## Build and push full variant to registry
+	@echo "$(BLUE)Pushing full variant to registry...$(NC)"
+	@docker tag $(IMAGE_PREFIX)-full-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-full:latest
+	@docker tag $(IMAGE_PREFIX)-full-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-full:$(VERSION)
+	@docker push $(REMOTE_IMAGE_PREFIX)-full:latest
+	@docker push $(REMOTE_IMAGE_PREFIX)-full:$(VERSION)
+	@echo "$(GREEN)✓ Full variant pushed to registry$(NC)"
+
+.PHONY: push-cloud
+push-cloud: build-cloud registry-login ## Build and push cloud variant to registry
+	@echo "$(BLUE)Pushing cloud variant to registry...$(NC)"
+	@docker tag $(IMAGE_PREFIX)-cloud-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-cloud:latest
+	@docker tag $(IMAGE_PREFIX)-cloud-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-cloud:$(VERSION)
+	@docker push $(REMOTE_IMAGE_PREFIX)-cloud:latest
+	@docker push $(REMOTE_IMAGE_PREFIX)-cloud:$(VERSION)
+	@echo "$(GREEN)✓ Cloud variant pushed to registry$(NC)"
+
+.PHONY: push-k8s
+push-k8s: build-k8s registry-login ## Build and push Kubernetes variant to registry
+	@echo "$(BLUE)Pushing Kubernetes variant to registry...$(NC)"
+	@docker tag $(IMAGE_PREFIX)-k8s-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-k8s:latest
+	@docker tag $(IMAGE_PREFIX)-k8s-$(ARCHITECTURE):latest $(REMOTE_IMAGE_PREFIX)-k8s:$(VERSION)
+	@docker push $(REMOTE_IMAGE_PREFIX)-k8s:latest
+	@docker push $(REMOTE_IMAGE_PREFIX)-k8s:$(VERSION)
+	@echo "$(GREEN)✓ Kubernetes variant pushed to registry$(NC)"
+
+.PHONY: push-all
+push-all: push-base push-go push-full ## Build and push core variants to registry
+	@echo "$(GREEN)✓ All core variants pushed to registry$(NC)"
+
+.PHONY: push-extended
+push-extended: push-all push-cloud push-k8s ## Build and push all variants to registry
+	@echo "$(GREEN)✓ All variants pushed to registry$(NC)"
+
+.PHONY: pull-base
+pull-base: ## Pull base variant from registry
+	@echo "$(BLUE)Pulling base variant from registry...$(NC)"
+	@docker pull $(REMOTE_IMAGE_PREFIX)-base:latest
+	@docker tag $(REMOTE_IMAGE_PREFIX)-base:latest $(IMAGE_PREFIX)-base-$(ARCHITECTURE):latest
+	@echo "$(GREEN)✓ Base variant pulled from registry$(NC)"
+
+.PHONY: pull-go
+pull-go: ## Pull Go variant from registry
+	@echo "$(BLUE)Pulling Go variant from registry...$(NC)"
+	@docker pull $(REMOTE_IMAGE_PREFIX)-go:latest
+	@docker tag $(REMOTE_IMAGE_PREFIX)-go:latest $(IMAGE_PREFIX)-go-$(ARCHITECTURE):latest
+	@echo "$(GREEN)✓ Go variant pulled from registry$(NC)"
+
+.PHONY: pull-full
+pull-full: ## Pull full variant from registry
+	@echo "$(BLUE)Pulling full variant from registry...$(NC)"
+	@docker pull $(REMOTE_IMAGE_PREFIX)-full:latest
+	@docker tag $(REMOTE_IMAGE_PREFIX)-full:latest $(IMAGE_PREFIX)-full-$(ARCHITECTURE):latest
+	@echo "$(GREEN)✓ Full variant pulled from registry$(NC)"
+
+.PHONY: pull-cloud
+pull-cloud: ## Pull cloud variant from registry
+	@echo "$(BLUE)Pulling cloud variant from registry...$(NC)"
+	@docker pull $(REMOTE_IMAGE_PREFIX)-cloud:latest
+	@docker tag $(REMOTE_IMAGE_PREFIX)-cloud:latest $(IMAGE_PREFIX)-cloud-$(ARCHITECTURE):latest
+	@echo "$(GREEN)✓ Cloud variant pulled from registry$(NC)"
+
+.PHONY: pull-k8s
+pull-k8s: ## Pull Kubernetes variant from registry
+	@echo "$(BLUE)Pulling Kubernetes variant from registry...$(NC)"
+	@docker pull $(REMOTE_IMAGE_PREFIX)-k8s:latest
+	@docker tag $(REMOTE_IMAGE_PREFIX)-k8s:latest $(IMAGE_PREFIX)-k8s-$(ARCHITECTURE):latest
+	@echo "$(GREEN)✓ Kubernetes variant pulled from registry$(NC)"
+
+.PHONY: pull-all
+pull-all: pull-base pull-go pull-full ## Pull core variants from registry
+	@echo "$(GREEN)✓ All core variants pulled from registry$(NC)"
+
+.PHONY: pull-extended
+pull-extended: pull-all pull-cloud pull-k8s ## Pull all variants from registry
+	@echo "$(GREEN)✓ All variants pulled from registry$(NC)"
 
 ##@ Advanced
 

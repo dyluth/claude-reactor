@@ -9,6 +9,7 @@ This document explains the improved division of responsibilities between the Mak
 
 **Responsibilities**:
 - Container variant selection and auto-detection
+- Registry-first image management with local fallback
 - Configuration persistence (`.claude-reactor` file)
 - Interactive container connection
 - Smart state management
@@ -17,9 +18,11 @@ This document explains the improved division of responsibilities between the Mak
 **Usage**:
 ```bash
 # Smart development workflow
-./claude-reactor                    # Auto-detect and connect
+./claude-reactor                    # Auto-detect variant, pull from registry
 ./claude-reactor --variant go       # Set and save Go preference
 ./claude-reactor --danger           # Quick dangerous mode
+./claude-reactor --dev              # Force local build (development)
+./claude-reactor --pull-latest      # Force fresh registry pull
 ./claude-reactor --show-config      # Check current settings
 ```
 
@@ -28,6 +31,7 @@ This document explains the improved division of responsibilities between the Mak
 
 **Responsibilities**:
 - Docker image building
+- Container registry operations (push/pull)
 - Test orchestration
 - Code quality (linting, formatting)
 - CI/CD pipelines
@@ -41,6 +45,11 @@ make build-all                      # Build all variants
 make test                           # Run test suite
 make ci-full                        # Complete CI pipeline
 make clean-all                      # Complete cleanup
+
+# Registry operations
+make pull-all                       # Pull core variants from registry
+make push-all                       # Build and push to registry
+make registry-login                 # Login to GitHub Container Registry
 ```
 
 ## 🔄 **Smart Delegation**
@@ -62,6 +71,11 @@ make build-base      # Pure Docker build
 make build-all       # Build multiple variants
 make test-unit       # Test orchestration
 make lint            # Code quality
+
+# Registry management
+make pull-all        # Pull from registry
+make push-all        # Push to registry  
+make registry-login  # Registry authentication
 ```
 
 ## 📋 **Typical Workflows**
@@ -69,8 +83,10 @@ make lint            # Code quality
 ### **Developer Daily Workflow**
 ```bash
 # Option 1: Direct script usage (recommended for development)
-./claude-reactor --variant go       # First time setup
-./claude-reactor                    # Subsequent runs use saved config
+./claude-reactor --variant go       # First time setup (pulls from registry)
+./claude-reactor                    # Subsequent runs (registry-first, local fallback)
+./claude-reactor --dev              # Force local build for development
+./claude-reactor --pull-latest      # Get newest images
 
 # Option 2: Make targets for convenience
 make run-go                         # One-time variant selection
@@ -97,6 +113,11 @@ make clean-all                      # Complete cleanup
 make ci-build                       # Build containers for CI
 make ci-test                        # Run CI-appropriate tests
 make ci-full                        # Complete CI pipeline
+
+# Registry management
+make pull-all                       # Pull latest from registry
+make push-all                       # Build and push (requires auth)
+make registry-login                 # GitHub Container Registry auth
 
 # Advanced analysis
 make benchmark                      # Container size analysis
@@ -134,8 +155,13 @@ make security-scan                  # Security vulnerability scanning
 |------|-----|---------|
 | Daily development | claude-reactor | `./claude-reactor` |
 | Force specific variant | either | `./claude-reactor --variant go` or `make run-go` |
+| Force local build | claude-reactor | `./claude-reactor --dev` |
+| Pull latest images | claude-reactor | `./claude-reactor --pull-latest` |
 | Check configuration | either | `./claude-reactor --show-config` or `make config` |
 | Build containers | Makefile | `make build-all` |
+| Pull from registry | Makefile | `make pull-all` |
+| Push to registry | Makefile | `make push-all` |
+| Registry login | Makefile | `make registry-login` |
 | Run tests | Makefile | `make test` |
 | Complete cleanup | Makefile | `make clean-all` |
 | Interactive demo | either | `./tests/demo.sh` or `make demo` |

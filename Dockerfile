@@ -148,15 +148,24 @@ RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" | tar -xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 
-# Install Go development tools
+# Install Go development tools (optimized for size)
 USER root
-RUN /usr/local/go/bin/go install golang.org/x/tools/gopls@latest && \
+RUN export GOCACHE=/tmp/go-cache && \
+    export GOMODCACHE=/tmp/go-mod-cache && \
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@latest && \
     /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@latest && \
     /usr/local/go/bin/go install honnef.co/go/tools/cmd/staticcheck@latest && \
-    /usr/local/go/bin/go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
-# Copy Go binaries to system path for all users
-RUN cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true
+    # Install golangci-lint via binary (much smaller)
+    ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then LINT_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then LINT_ARCH="amd64"; \
+    else LINT_ARCH="amd64"; fi && \
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | \
+    sh -s -- -b /usr/local/bin v1.55.2 && \
+    # Copy Go tools and aggressive cleanup
+    cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
+    rm -rf /root/go /tmp/go-* /root/.cache /tmp/golangci-lint* && \
+    /usr/local/go/bin/go clean -cache -modcache
 
 # Switch back to claude user
 USER claude
@@ -169,13 +178,24 @@ FROM go AS full
 # Switch to root for installations
 USER root
 
-# Install Rust
-ENV RUST_VERSION=1.75.0
+# Install Rust (updated version for compatibility)
+ENV RUST_VERSION=1.82.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
 ENV PATH=/root/.cargo/bin:$PATH
 
-# Install Rust development tools
-RUN /root/.cargo/bin/cargo install cargo-edit cargo-watch cargo-audit
+# Install Rust development tools (with fallback strategy)
+RUN export CARGO_TARGET_DIR=/tmp/cargo-target && \
+    # Install cargo-watch (works reliably)
+    /root/.cargo/bin/cargo install cargo-watch && \
+    # Try to install other tools with specific versions, continue on failure
+    (/root/.cargo/bin/cargo install cargo-edit --version "=0.12.2" || echo "cargo-edit skipped") && \
+    (/root/.cargo/bin/cargo install cargo-audit --version "=0.18.3" || echo "cargo-audit skipped") && \
+    # Clean up cargo cache and temporary files
+    rm -rf /root/.cargo/registry /root/.cargo/git /tmp/cargo-* && \
+    # Verify Rust installation
+    /root/.cargo/bin/rustc --version && \
+    /root/.cargo/bin/cargo --version && \
+    echo "Rust toolchain installed successfully"
 
 # Install Java (OpenJDK 17)
 RUN apt-get update && apt-get install -y \
@@ -184,7 +204,15 @@ RUN apt-get update && apt-get install -y \
     gradle \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
+# Set JAVA_HOME dynamically based on architecture
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then \
+        echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64' >> /etc/environment; \
+        echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64' >> /root/.bashrc; \
+    else \
+        echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> /etc/environment; \
+        echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> /root/.bashrc; \
+    fi
 
 # Install database clients
 RUN apt-get update && apt-get install -y \
@@ -205,9 +233,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Rust toolchain to system path
-RUN cp /root/.cargo/bin/cargo /usr/local/bin/ && \
-    cp /root/.cargo/bin/rustc /usr/local/bin/ && \
-    cp /root/.cargo/bin/rustup /usr/local/bin/
+RUN cp /root/.cargo/bin/cargo* /usr/local/bin/ 2>/dev/null || true && \
+    cp /root/.cargo/bin/rust* /usr/local/bin/ 2>/dev/null || true
 
 # Switch back to claude user
 USER claude
