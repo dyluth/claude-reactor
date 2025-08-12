@@ -213,8 +213,8 @@ test_script_options() {
         return 1
     fi
     
-    # Test --show-config (should work even without config file)
-    if ! "$reactor_script" --show-config > /dev/null 2>&1; then
+    # Test config show (should work even without config file)
+    if ! "$reactor_script" config show > /dev/null 2>&1; then
         log_failure "Failed to show config"
         cd "$TEST_DIR" 
         rm -rf "$test_dir"
@@ -222,11 +222,15 @@ test_script_options() {
     fi
     
     # Test variant validation (should fail for invalid variant)
-    if "$reactor_script" --variant invalid --show-config > /dev/null 2>&1; then
-        log_failure "Script should reject invalid variant"
-        cd "$TEST_DIR"
-        rm -rf "$test_dir"
-        return 1
+    if "$reactor_script" run --variant invalid --help > /dev/null 2>&1; then
+        # This should succeed because --help doesn't validate the variant
+        # Let's test build with invalid variant instead which does validate
+        if "$reactor_script" build invalid > /dev/null 2>&1; then
+            log_failure "Script should reject invalid variant"
+            cd "$TEST_DIR"
+            rm -rf "$test_dir"
+            return 1
+        fi
     fi
     
     cd "$TEST_DIR"
@@ -246,7 +250,7 @@ test_config_file_integration() {
     echo 'module test' > go.mod
     
     # Run script to show config (should auto-detect 'go')
-    local output=$("$reactor_script" --show-config 2>&1 || true)
+    local output=$("$reactor_script" config show 2>&1 || true)
     if ! echo "$output" | grep -q "go"; then
         log_failure "Auto-detection not working in integration"
         cd "$TEST_DIR"
@@ -254,8 +258,8 @@ test_config_file_integration() {
         return 1
     fi
     
-    # Set explicit variant and verify config file creation
-    "$reactor_script" --variant full --show-config > /dev/null 2>&1 || true
+    # Set explicit variant using legacy compatibility flag and verify config file creation
+    "$reactor_script" --variant full > /dev/null 2>&1 || true
     
     if [ ! -f ".claude-reactor" ]; then
         log_failure "Configuration file not created"

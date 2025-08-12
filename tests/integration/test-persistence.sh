@@ -42,6 +42,13 @@ log_test() {
     echo -e "${BLUE}[TEST]${NC} $1"
 }
 
+# Helper function to find running claude-reactor container
+find_container_name() {
+    local pattern="claude-reactor-go"
+    local container_name=$(docker ps --format '{{.Names}}' | grep "^$pattern" | head -1)
+    echo "$container_name"
+}
+
 # Cleanup function
 cleanup() {
     local exit_code=$?
@@ -53,7 +60,7 @@ cleanup() {
     
     # Clean up test containers using isolated config
     if [ -n "$TEST_CLAUDE_DIR" ]; then
-        HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --clean > /dev/null 2>&1 || true
+        HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" clean > /dev/null 2>&1 || true
     fi
     
     if [ $exit_code -eq 0 ]; then
@@ -162,15 +169,32 @@ test_config_mounting() {
     
     cd "$TEST_PROJECT_DIR"
     
-    # Start container using isolated HOME directory
-    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --variant go --shell &
+    # Start container using isolated HOME directory and capture logs to extract container name
+    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" run --variant go --shell > /tmp/container_log_$$ 2>&1 &
     local container_pid=$!
     
     # Wait for container to be ready
     sleep 10
     
+    # Extract container name from log output
+    local container_name=$(grep "Container name:" /tmp/container_log_$$ | head -1 | sed 's/.*Container name: //' || echo "claude-reactor-go-arm64-*-default")
+    rm -f /tmp/container_log_$$
+    
+    # If extraction failed, try to find running container with claude-reactor prefix
+    if [ -z "$container_name" ] || [ "$container_name" = "claude-reactor-go-arm64-*-default" ]; then
+        container_name=$(docker ps --format '{{.Names}}' | grep '^claude-reactor-go' | head -1)
+    fi
+    
+    if [ -z "$container_name" ]; then
+        log_failure "Could not find container name"
+        kill $container_pid 2>/dev/null || true
+        return 1
+    fi
+    
+    log_info "Using container: $container_name"
+    
     # Check if config file is mounted and accessible
-    if docker exec claude-agent-go test -f /home/claude/.claude.json; then
+    if docker exec "$container_name" test -f /home/claude/.claude.json; then
         log_success "Claude config file is mounted in container"
     else
         log_failure "Claude config file is not mounted in container"
@@ -180,7 +204,7 @@ test_config_mounting() {
     
     # Check if config content matches
     local container_user_id
-    container_user_id=$(docker exec claude-agent-go jq -r '.userID // "missing"' /home/claude/.claude.json 2>/dev/null || echo "error")
+    container_user_id=$(docker exec "$container_name" jq -r '.userID // "missing"' /home/claude/.claude.json 2>/dev/null || echo "error")
     
     if [ "$container_user_id" = "test-user-id-12345" ]; then
         log_success "Claude config content is correctly mounted"
@@ -192,7 +216,7 @@ test_config_mounting() {
     
     # Clean up container
     kill $container_pid 2>/dev/null || true
-    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --clean > /dev/null 2>&1 || true
+    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" clean > /dev/null 2>&1 || true
     
     return 0
 }
@@ -204,14 +228,25 @@ test_docker_access() {
     cd "$TEST_PROJECT_DIR"
     
     # Start container using isolated HOME directory
-    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --variant go --shell &
+    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" run --variant go --shell &
     local container_pid=$!
     
     # Wait for container to be ready
     sleep 10
     
+    # Find the running container
+    local container_name=$(find_container_name)
+    
+    if [ -z "$container_name" ]; then
+        log_failure "Could not find running container"
+        kill $container_pid 2>/dev/null || true
+        return 1
+    fi
+    
+    log_info "Using container: $container_name"
+    
     # Test if Docker socket is accessible
-    if docker exec claude-agent-go test -S /var/run/docker.sock; then
+    if docker exec "$container_name" test -S /var/run/docker.sock; then
         log_success "Docker socket is mounted in container"
     else
         log_failure "Docker socket is not mounted in container"
@@ -220,7 +255,7 @@ test_docker_access() {
     fi
     
     # Test if claude user can run docker commands
-    if docker exec --user claude claude-agent-go docker version > /dev/null 2>&1; then
+    if docker exec --user claude "$container_name" docker version > /dev/null 2>&1; then
         log_success "Claude user can execute Docker commands"
     else
         log_warning "Claude user cannot execute Docker commands (may need group membership)"
@@ -229,7 +264,7 @@ test_docker_access() {
     
     # Clean up container
     kill $container_pid 2>/dev/null || true
-    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --clean > /dev/null 2>&1 || true
+    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" clean > /dev/null 2>&1 || true
     
     return 0
 }
@@ -242,7 +277,7 @@ test_persistence_across_restarts() {
     
     # Start container first time using isolated HOME directory
     log_info "Starting container for the first time"
-    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --variant go --shell &
+    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" run --variant go --shell &
     local container_pid=$!
     
     # Wait for container to be ready
@@ -254,20 +289,31 @@ test_persistence_across_restarts() {
     
     # Stop container with --clean
     kill $container_pid 2>/dev/null || true
-    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --clean > /dev/null 2>&1 || true
+    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" clean > /dev/null 2>&1 || true
     
     log_info "Restarting container after clean"
     
     # Start container second time using isolated HOME directory
-    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --variant go --shell &
+    timeout 30 env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" run --variant go --shell &
     container_pid=$!
     
     # Wait for container to be ready
     sleep 10
     
+    # Find the running container
+    local container_name=$(find_container_name)
+    
+    if [ -z "$container_name" ]; then
+        log_failure "Could not find running container after restart"
+        kill $container_pid 2>/dev/null || true
+        return 1
+    fi
+    
+    log_info "Using restarted container: $container_name"
+    
     # Check if the original config persisted and our modification is there
     local restored_user_id
-    restored_user_id=$(docker exec claude-agent-go jq -r '.userID // "missing"' /home/claude/.claude.json 2>/dev/null || echo "error")
+    restored_user_id=$(docker exec "$container_name" jq -r '.userID // "missing"' /home/claude/.claude.json 2>/dev/null || echo "error")
     
     if [ "$restored_user_id" = "test-user-id-12345" ]; then
         log_success "Claude configuration persisted across container restart"
@@ -286,7 +332,7 @@ test_persistence_across_restarts() {
     
     # Clean up container
     kill $container_pid 2>/dev/null || true
-    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" --clean > /dev/null 2>&1 || true
+    env HOME="$TEMP_DIR" "$PROJECT_ROOT/claude-reactor" clean > /dev/null 2>&1 || true
     
     return 0
 }
