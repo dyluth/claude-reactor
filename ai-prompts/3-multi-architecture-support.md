@@ -17,15 +17,18 @@ To automatically detect and build architecture-appropriate Docker containers for
 - **Key Files**: `Dockerfile`, `claude-reactor` script, `Makefile`, `tests/integration/test-variants.sh`
 
 ### current state
-**CRITICAL FINDING**: The current Dockerfile hardcodes ARM64-specific URLs, making it incompatible with x86_64 systems. Key issues:
+**Current Go CLI Implementation Status:**
+- **Phase 0 Complete**: Go CLI has achieved feature parity with bash script 
+- **Multi-Architecture Docker Support**: Dockerfile includes dynamic architecture detection and appropriate binary downloads
+- **Build System**: Makefile supports cross-platform builds with automatic architecture detection
+- **Container Management**: Go-based Docker SDK integration handles architecture-aware container lifecycle
+- **Configuration**: Account isolation and variant management fully implemented
 
-- **Dockerfile line 25**: `kubectl` download hardcoded to `linux/arm64` 
-- **Dockerfile line 115**: Go binary hardcoded to `linux-arm64.tar.gz`
-- **Dockerfile line 191**: AWS CLI hardcoded to `awscliv2-exe-linux-aarch64.zip`
-- **Dockerfile lines 231, 235, 243**: K8s tools hardcoded to `arm64` binaries
-- **Makefile line 12**: `DOCKER_PLATFORM ?= linux/arm64` forces ARM64 platform
-
-This means the current implementation will **fail to build on x86_64 systems** and represents a blocking issue for multi-architecture support.
+**Remaining Multi-Architecture Enhancements:**
+- Advanced registry support with architecture-specific image tags
+- Cross-platform performance optimization
+- Enhanced architecture detection and validation
+- Improved multi-platform testing capabilities
 
 ## context & problem definition
 
@@ -65,14 +68,15 @@ This means the current implementation will **fail to build on x86_64 systems** a
 - **Developer Experience**: <10 minutes from git clone to running locally
 
 ### Technical Constraints
-- **CRITICAL**: Current Dockerfile hardcodes ARM64 binaries - must be fixed before multi-arch support
-- Must work with existing Docker installation (no buildx requirement initially)
-- No cross-compilation - native builds only  
-- Local builds only (no registry requirements)
-- Must maintain current container size optimization
-- Shell script compatibility across macOS and Linux
+- Must maintain compatibility with current Go CLI architecture and Docker SDK integration
+- Build on existing multi-architecture foundation already implemented in Phase 0
+- Integrate seamlessly with current container registry support (ghcr.io)
+- Must work with existing Docker installation (no additional buildx requirements)
+- Support both local builds and registry-based deployments
+- Must maintain current container size optimization and performance
+- Cross-platform compatibility across macOS, Linux, and Windows (WSL2)
 - **Architecture mapping**: `uname -m` outputs (arm64, aarch64, x86_64, amd64) to Docker platform names
-- **Binary URL patterns**: Each tool has different URL patterns for different architectures
+- **Registry integration**: Architecture-specific image tags in container registries
 
 ## Data & Database changes
 
@@ -106,40 +110,42 @@ N/A - No UI changes required.
 
 ## Implementation plan
 
-### phase 1 - Architecture Detection & Core Logic
-- [ ] Add architecture detection function to `claude-reactor` script using `uname -m`
-- [ ] Map architecture names to standardized values (arm64, amd64)
-- [ ] Update container naming scheme to include architecture suffix
-- [ ] Modify image build logic to use architecture-aware tags
-- [ ] Add architecture info to `--show-config` output
+### phase 1 - Enhanced Registry Architecture Support
+- [ ] Implement architecture-specific container registry tags (e.g., v2-claude-reactor-go-arm64, v2-claude-reactor-go-amd64)
+- [ ] Add registry manifest inspection for architecture compatibility
+- [ ] Update Go CLI registry logic to prefer native architecture images
+- [ ] Enhance `--show-config` output with registry architecture information
+- [ ] Add architecture validation for registry pulls
 
-### phase 2 - Docker Integration (CRITICAL - Fix Hardcoded Architecture)
-- [ ] **URGENT**: Replace all hardcoded ARM64 URLs with architecture-aware logic in Dockerfile
-- [ ] Fix kubectl download URL (lines 25-26) to use detected architecture
-- [ ] Fix Go binary download (line 115) to use correct architecture suffix
-- [ ] Fix AWS CLI download (line 191) to use correct architecture
-- [ ] Fix all K8s tools downloads (lines 231, 235, 243) to use detected architecture
-- [ ] Update container cleanup logic to handle architecture-specific names
-- [ ] Test image builds on both ARM64 and x86_64 platforms
+### phase 2 - Advanced Go CLI Integration
+- [ ] Enhance Go Docker SDK integration with explicit architecture targeting
+- [ ] Implement architecture-aware image building with buildx support (optional)
+- [ ] Add architecture conflict detection and automatic rebuilding
+- [ ] Update container naming and management for architecture-specific containers
+- [ ] Integrate architecture preferences with existing account isolation system
+- [ ] Optimize multi-architecture container lifecycle management
 
-### phase 3 - Makefile & Build System Updates
-- [ ] Update Makefile targets to pass architecture information
-- [ ] Modify `build-all`, `build-base`, `build-go`, etc. to handle architectures
-- [ ] Update test targets to validate architecture-specific containers
-- [ ] Add architecture-aware cleanup targets
+### phase 3 - Performance and Cross-Platform Optimization
+- [ ] Implement architecture-specific performance optimizations
+- [ ] Add cross-compilation support for Go CLI binary distribution
+- [ ] Optimize container layer caching for multi-architecture builds
+- [ ] Enhance cross-platform path handling and mount management
+- [ ] Add Windows (WSL2) specific architecture detection and optimization
 
-### phase 4 - Testing & Validation
-- [ ] Extend unit tests to cover architecture detection logic
-- [ ] Update integration tests to validate both architectures
-- [ ] Add cross-platform test scenarios to test suite
-- [ ] Validate performance improvements on ARM64 systems
+### phase 4 - Advanced Testing & Validation
+- [ ] Create comprehensive multi-architecture test matrix (ARM64, x86_64, registry vs local)
+- [ ] Implement automated cross-platform CI/CD validation
+- [ ] Add architecture compatibility regression testing
+- [ ] Performance benchmarking across architectures and variants
+- [ ] Validate registry-based multi-architecture deployment workflows
 
-### phase 5 - Documentation & Operations
-- [ ] Update CLAUDE.md with multi-architecture capabilities
-- [ ] Document architecture detection behavior in README
-- [ ] Add troubleshooting guide for architecture-related issues
-- [ ] Update WORKFLOW.md with architecture considerations
-- [ ] Validate <10 minute developer onboarding experience across platforms
+### phase 5 - Documentation & Developer Experience
+- [ ] Update ROADMAP.md with Phase 2 multi-architecture completion status
+- [ ] Create comprehensive multi-architecture developer guide
+- [ ] Document registry architecture management best practices
+- [ ] Add troubleshooting guide for cross-platform and architecture issues
+- [ ] Validate seamless developer experience across all supported platforms
+- [ ] Create team collaboration guide for mixed-architecture environments
 
 ## 5. Testing Strategy
 ### Unit Tests
@@ -193,12 +199,13 @@ No feature flag needed - architecture detection will be always-on with graceful 
 ## 8. Open Questions & Assumptions
 
 ### Open Questions
-1. Should we store detected architecture in `.claude-reactor` config file for consistency?
-2. How should we handle edge cases like running x86_64 Docker on ARM64 host?
-3. Should architecture be user-overrideable via command line flag?
-4. **CRITICAL**: How should we handle the immediate compatibility issue with x86_64 systems?
-5. Should we implement build-time architecture detection in Dockerfile or runtime detection in script?
-6. How do we map different `uname -m` outputs (aarch64 vs arm64, x86_64 vs amd64) to consistent naming?
+1. Should architecture preferences be stored in `.claude-reactor` config file or always auto-detected?
+2. How should we handle architecture conflicts between local builds and registry images?
+3. Should architecture selection be user-overrideable via command line flag (e.g., `--arch x86_64`)?
+4. What's the optimal strategy for registry architecture manifest management and caching?
+5. Should we implement Docker buildx multi-platform builds or maintain separate architecture builds?
+6. How do we handle mixed-architecture development teams and shared project configurations?
+7. What's the best approach for architecture-aware CI/CD pipeline integration?
 
 ### Assumptions
 - Docker is configured to run native containers (not emulated)
