@@ -9,6 +9,7 @@ import (
 	"claude-reactor/internal/docker"
 	"claude-reactor/internal/logging"
 	"claude-reactor/internal/mount"
+	"claude-reactor/internal/template"
 )
 
 // NewAppContainer creates and initializes the application dependency container
@@ -37,6 +38,9 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 	// Initialize devcontainer manager
 	devContainerMgr := devcontainer.NewManager(logger, configMgr)
 	
+	// Initialize template manager
+	templateMgr := template.NewManager(logger, configMgr, devContainerMgr)
+	
 	return &pkg.AppContainer{
 		ArchDetector:    archDetector,
 		ConfigMgr:       configMgr,
@@ -44,6 +48,7 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 		AuthMgr:         authMgr,
 		MountMgr:        mountMgr,
 		DevContainerMgr: devContainerMgr,
+		TemplateMgr:     templateMgr,
 		Logger:          logger,
 	}, nil
 }
