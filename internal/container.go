@@ -5,6 +5,7 @@ import (
 	"claude-reactor/internal/architecture"
 	"claude-reactor/internal/auth"
 	"claude-reactor/internal/config"
+	"claude-reactor/internal/devcontainer"
 	"claude-reactor/internal/docker"
 	"claude-reactor/internal/logging"
 	"claude-reactor/internal/mount"
@@ -33,12 +34,16 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 	// Initialize mount manager
 	mountMgr := mount.NewManager(logger)
 	
+	// Initialize devcontainer manager
+	devContainerMgr := devcontainer.NewManager(logger, configMgr)
+	
 	return &pkg.AppContainer{
-		ArchDetector: archDetector,
-		ConfigMgr:    configMgr,
-		DockerMgr:    dockerMgr,
-		AuthMgr:      authMgr,
-		MountMgr:     mountMgr,
-		Logger:       logger,
+		ArchDetector:    archDetector,
+		ConfigMgr:       configMgr,
+		DockerMgr:       dockerMgr,
+		AuthMgr:         authMgr,
+		MountMgr:        mountMgr,
+		DevContainerMgr: devContainerMgr,
+		Logger:          logger,
 	}, nil
 }

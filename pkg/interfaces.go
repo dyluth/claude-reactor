@@ -216,12 +216,98 @@ type ContainerStatus struct {
 	ID      string `yaml:"id,omitempty"`
 }
 
+// DevContainerConfig represents VS Code devcontainer.json configuration
+type DevContainerConfig struct {
+	Name               string                 `json:"name"`
+	DockerFile         string                 `json:"dockerFile,omitempty"`
+	Build              *DevContainerBuild     `json:"build,omitempty"`
+	Image              string                 `json:"image,omitempty"`
+	Features           map[string]interface{} `json:"features,omitempty"`
+	Customizations     *DevContainerCustom    `json:"customizations,omitempty"`
+	ForwardPorts       []int                  `json:"forwardPorts,omitempty"`
+	PostCreateCommand  interface{}            `json:"postCreateCommand,omitempty"`
+	PostStartCommand   interface{}            `json:"postStartCommand,omitempty"`
+	PostAttachCommand  interface{}            `json:"postAttachCommand,omitempty"`
+	Mounts             []DevContainerMount    `json:"mounts,omitempty"`
+	WorkspaceFolder    string                 `json:"workspaceFolder,omitempty"`
+	WorkspaceMount     string                 `json:"workspaceMount,omitempty"`
+	RunArgs            []string               `json:"runArgs,omitempty"`
+	OverrideCommand    bool                   `json:"overrideCommand,omitempty"`
+	ShutdownAction     string                 `json:"shutdownAction,omitempty"`
+	UserEnvProbe       string                 `json:"userEnvProbe,omitempty"`
+}
+
+// DevContainerBuild represents build configuration
+type DevContainerBuild struct {
+	DockerFile string            `json:"dockerfile"`
+	Context    string            `json:"context,omitempty"`
+	Args       map[string]string `json:"args,omitempty"`
+	Target     string            `json:"target,omitempty"`
+}
+
+// DevContainerCustom represents VS Code customizations
+type DevContainerCustom struct {
+	VSCode *VSCodeCustomization `json:"vscode,omitempty"`
+}
+
+// VSCodeCustomization represents VS Code-specific settings
+type VSCodeCustomization struct {
+	Extensions []string               `json:"extensions,omitempty"`
+	Settings   map[string]interface{} `json:"settings,omitempty"`
+}
+
+// DevContainerMount represents mount configuration for devcontainers
+type DevContainerMount struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Type   string `json:"type"`
+}
+
+// ProjectDetectionResult contains enhanced project detection information
+type ProjectDetectionResult struct {
+	ProjectType    string            `json:"projectType"`
+	Languages      []string          `json:"languages"`
+	Frameworks     []string          `json:"frameworks"`
+	Variant        string            `json:"variant"`
+	Extensions     []string          `json:"extensions"`
+	Features       []string          `json:"features"`
+	Tools          []string          `json:"tools"`
+	Files          []string          `json:"files"`
+	Confidence     float64           `json:"confidence"`
+	Metadata       map[string]string `json:"metadata"`
+}
+
+// DevContainerManager handles VS Code Dev Container integration
+type DevContainerManager interface {
+	// GenerateDevContainer creates .devcontainer configuration based on project detection
+	GenerateDevContainer(projectPath string, config *Config) error
+	
+	// ValidateDevContainer validates existing .devcontainer configuration
+	ValidateDevContainer(projectPath string) error
+	
+	// GetExtensionsForProject returns recommended VS Code extensions for detected project type
+	GetExtensionsForProject(projectType string, variant string) ([]string, error)
+	
+	// CreateDevContainerConfig generates devcontainer.json content
+	CreateDevContainerConfig(config *DevContainerConfig) ([]byte, error)
+	
+	// DetectProjectType performs enhanced project detection for VS Code integration
+	DetectProjectType(projectPath string) (*ProjectDetectionResult, error)
+	
+	// UpdateDevContainer updates existing .devcontainer configuration
+	UpdateDevContainer(projectPath string, config *Config) error
+	
+	// RemoveDevContainer removes .devcontainer directory and configurations
+	RemoveDevContainer(projectPath string) error
+}
+
 // AppContainer holds all application dependencies
 type AppContainer struct {
-	ArchDetector ArchitectureDetector
-	ConfigMgr    ConfigManager
-	DockerMgr    DockerManager
-	AuthMgr      AuthManager
-	MountMgr     MountManager
-	Logger       Logger
+	ArchDetector    ArchitectureDetector
+	ConfigMgr       ConfigManager
+	DockerMgr       DockerManager
+	AuthMgr         AuthManager
+	MountMgr        MountManager
+	DevContainerMgr DevContainerManager
+	Logger          Logger
 }
