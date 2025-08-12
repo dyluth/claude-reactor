@@ -153,11 +153,33 @@ build-extended: build-all build-cloud build-k8s ## Build all container variants 
 
 ##@ Testing
 
+.PHONY: test-go-unit
+test-go-unit: ## Run Go unit tests
+	@echo "$(BLUE)Running Go unit tests...$(NC)"
+	@go test -v ./internal/... ./pkg/... ./cmd/...
+	@echo "$(GREEN)✓ Go unit tests completed$(NC)"
+
+.PHONY: test-go-integration
+test-go-integration: ## Run Go integration tests (requires Docker)
+	@echo "$(BLUE)Running Go integration tests...$(NC)"
+	@go test -v -tags=integration ./internal/... ./pkg/... ./cmd/...
+	@echo "$(GREEN)✓ Go integration tests completed$(NC)"
+
+.PHONY: test-go-all
+test-go-all: test-go-unit test-go-integration ## Run all Go tests
+	@echo "$(GREEN)✓ All Go tests completed$(NC)"
+
 .PHONY: test-unit
-test-unit: ## Run unit tests (fast)
-	@echo "$(BLUE)Running unit tests...$(NC)"
+test-unit: test-go-unit ## Run unit tests (fast) - includes both bash and Go tests
+	@echo "$(BLUE)Running bash unit tests...$(NC)"
 	@./tests/test-runner.sh --unit
 	@echo "$(GREEN)✓ Unit tests completed$(NC)"
+
+.PHONY: test-phase0
+test-phase0: build ## Run Phase 0 feature validation tests
+	@echo "$(BLUE)Running Phase 0 feature validation tests...$(NC)"
+	@./tests/phase0/test-phase0-quick.sh
+	@echo "$(GREEN)✓ Phase 0 tests completed$(NC)"
 
 .PHONY: test-integration
 test-integration: ## Run integration tests (requires Docker)
@@ -192,6 +214,62 @@ demo-quick: ## Run quick demo without Docker builds
 	@echo "$(BLUE)Running quick demo...$(NC)"
 	@./tests/demo.sh --quick --auto && echo "$(GREEN)✓ Demo completed$(NC)"
 
+##@ Go Development
+
+.PHONY: build
+build: ## Build main claude-reactor binary
+	@echo "$(BLUE)Building claude-reactor binary...$(NC)"
+	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o claude-reactor ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Binary built: claude-reactor$(NC)"
+
+.PHONY: go-build
+go-build: build ## Build Go binary (alias for build)
+	@echo "$(GREEN)✓ Go binary built: claude-reactor$(NC)"
+
+.PHONY: go-build-all
+go-build-all: ## Build Go binaries for multiple platforms
+	@echo "$(BLUE)Building Go binaries for multiple platforms...$(NC)"
+	@mkdir -p dist
+	@GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-amd64 ./cmd/claude-reactor
+	@GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-arm64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-amd64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-arm64 ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Multi-platform binaries built in dist/$(NC)"
+
+.PHONY: go-lint
+go-lint: ## Run Go linting
+	@echo "$(BLUE)Running Go linting...$(NC)"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./... ; \
+		echo "$(GREEN)✓ Go linting completed$(NC)" ; \
+	else \
+		echo "$(YELLOW)⚠ golangci-lint not found, running basic go vet$(NC)" ; \
+		go vet ./... ; \
+	fi
+
+.PHONY: go-fmt
+go-fmt: ## Format Go code
+	@echo "$(BLUE)Formatting Go code...$(NC)"
+	@go fmt ./...
+	@echo "$(GREEN)✓ Go code formatted$(NC)"
+
+.PHONY: go-mod-tidy
+go-mod-tidy: ## Tidy Go modules
+	@echo "$(BLUE)Tidying Go modules...$(NC)"
+	@go mod tidy
+	@echo "$(GREEN)✓ Go modules tidied$(NC)"
+
+.PHONY: go-deps
+go-deps: ## Download Go dependencies
+	@echo "$(BLUE)Downloading Go dependencies...$(NC)"
+	@go mod download
+	@echo "$(GREEN)✓ Go dependencies downloaded$(NC)"
+
 ##@ Development
 
 .PHONY: dev-setup
@@ -200,6 +278,7 @@ dev-setup: ## Set up development environment
 	@chmod +x claude-reactor
 	@chmod +x tests/*.sh
 	@chmod +x tests/*/*.sh
+	@make go-deps
 	@echo "$(GREEN)✓ Development environment ready$(NC)"
 
 .PHONY: lint

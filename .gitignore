@@ -1,14 +1,17 @@
 # Claude-reactor project-specific configuration files
 .claude-reactor
 .claude-reactor-*-env
+claude-reactor
 
 # Claude Code local settings
 .claude/
+old/
 
 # Test directories and files
 support-bot-test/
 test-project/
 *-test/
+*test
 
 # Environment files containing API keys
 .env
@@ -29,3 +32,7 @@ test-project/
 # Logs
 *.log
 test*
+
+# other downloaded stuff
+*.gz
+*.tar
