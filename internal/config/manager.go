@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	
 	"claude-reactor/pkg"
 )
@@ -52,19 +54,29 @@ func (m *manager) SaveConfig(config *pkg.Config) error {
 
 // ValidateConfig validates configuration structure and values
 func (m *manager) ValidateConfig(config *pkg.Config) error {
-	// TODO: Implement configuration validation
 	if config == nil {
 		return fmt.Errorf("configuration cannot be nil")
 	}
 	
-	validVariants := []string{"base", "go", "full", "cloud", "k8s"}
-	for _, variant := range validVariants {
+	if config.Variant == "" {
+		return fmt.Errorf("image/variant cannot be empty")
+	}
+	
+	// Check if it's a built-in variant
+	builtinVariants := []string{"base", "go", "full", "cloud", "k8s"}
+	for _, variant := range builtinVariants {
 		if config.Variant == variant {
-			return nil
+			return nil // Built-in variant is always valid
 		}
 	}
 	
-	return fmt.Errorf("invalid variant: %s", config.Variant)
+	// If not a built-in variant, treat as custom Docker image
+	// Basic validation for Docker image name format
+	if !isValidDockerImageName(config.Variant) {
+		return fmt.Errorf("invalid image name format: %s. Must be a built-in variant (base, go, full, cloud, k8s) or valid Docker image name", config.Variant)
+	}
+	
+	return nil // Custom image passed basic validation
 }
 
 // GetDefaultConfig returns a default configuration with auto-detection
@@ -143,4 +155,40 @@ func (m *manager) ListAccounts() ([]string, error) {
 	// TODO: Implement account listing from ~/.claude-reactor directory
 	m.logger.Debug("Listing Claude accounts (stub implementation)")
 	return []string{"default"}, nil
+}
+
+// isValidDockerImageName validates basic Docker image name format
+// Supports formats like: ubuntu, ubuntu:22.04, ghcr.io/org/repo:tag, localhost:5000/image
+func isValidDockerImageName(name string) bool {
+	if name == "" {
+		return false
+	}
+	
+	// Docker image name pattern (simplified but covers most cases)
+	// - May contain registry hostname with optional port
+	// - May contain namespace/organization
+	// - Image name (required)
+	// - Optional tag or digest
+	pattern := `^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*(?::[0-9]+)?/)?[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)*(?::[a-zA-Z0-9][a-zA-Z0-9._-]*)?(?:@sha256:[a-f0-9]{64})?$`
+	
+	matched, err := regexp.MatchString(pattern, name)
+	if err != nil {
+		return false
+	}
+	
+	// Additional basic checks
+	if matched {
+		// Reject if it starts or ends with special characters
+		if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") ||
+		   strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") {
+			return false
+		}
+		
+		// Reject if it has consecutive dots or slashes
+		if strings.Contains(name, "..") || strings.Contains(name, "//") {
+			return false
+		}
+	}
+	
+	return matched
 }

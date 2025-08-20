@@ -205,9 +205,9 @@ test_script_options() {
     
     local reactor_script="$PROJECT_ROOT/claude-reactor"
     
-    # Test --list-variants
-    if ! "$reactor_script" --list-variants > /dev/null 2>&1; then
-        log_failure "Failed to list variants"
+    # Test build command (list variants capability is now in build help)
+    if ! "$reactor_script" build --help > /dev/null 2>&1; then
+        log_failure "Failed to access build command help"
         cd "$TEST_DIR"
         rm -rf "$test_dir"
         return 1
@@ -221,12 +221,12 @@ test_script_options() {
         return 1
     fi
     
-    # Test variant validation (should fail for invalid variant)
-    if "$reactor_script" run --variant invalid --help > /dev/null 2>&1; then
-        # This should succeed because --help doesn't validate the variant
+    # Test image validation (should fail for invalid image)
+    if "$reactor_script" run --image .invalid-image. --help > /dev/null 2>&1; then
+        # This should succeed because --help doesn't validate the image
         # Let's test build with invalid variant instead which does validate
-        if "$reactor_script" build invalid > /dev/null 2>&1; then
-            log_failure "Script should reject invalid variant"
+        if "$reactor_script" build .invalid-image. > /dev/null 2>&1; then
+            log_failure "Script should reject invalid image name"
             cd "$TEST_DIR"
             rm -rf "$test_dir"
             return 1
@@ -258,8 +258,8 @@ test_config_file_integration() {
         return 1
     fi
     
-    # Set explicit variant using legacy compatibility flag and verify config file creation
-    "$reactor_script" --variant full > /dev/null 2>&1 || true
+    # Set explicit image and verify config file creation  
+    "$reactor_script" run --image full --help > /dev/null 2>&1 || true
     
     if [ ! -f ".claude-reactor" ]; then
         log_failure "Configuration file not created"
@@ -268,6 +268,7 @@ test_config_file_integration() {
         return 1
     fi
     
+    # Note: Config file still uses 'variant=' for backward compatibility
     if ! grep -q "variant=full" ".claude-reactor"; then
         log_failure "Configuration not saved correctly"
         cd "$TEST_DIR"

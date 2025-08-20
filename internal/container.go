@@ -8,6 +8,7 @@ import (
 	"claude-reactor/internal/dependency"
 	"claude-reactor/internal/devcontainer"
 	"claude-reactor/internal/docker"
+	"claude-reactor/internal/docker/validation"
 	"claude-reactor/internal/hotreload"
 	"claude-reactor/internal/logging"
 	"claude-reactor/internal/mount"
@@ -52,6 +53,9 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 	containerSync := hotreload.NewContainerSync(logger, dockerMgr.GetClient())
 	hotReloadMgr := hotreload.NewHotReloadManager(logger, dockerMgr.GetClient())
 	
+	// Initialize image validator
+	imageValidator := validation.NewImageValidator(dockerMgr.GetClient(), logger)
+	
 	return &pkg.AppContainer{
 		ArchDetector:    archDetector,
 		ConfigMgr:       configMgr,
@@ -65,6 +69,7 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 		BuildTrigger:    buildTrigger,
 		ContainerSync:   containerSync,
 		HotReloadMgr:    hotReloadMgr,
+		ImageValidator:  imageValidator,
 		Logger:          logger,
 	}, nil
 }

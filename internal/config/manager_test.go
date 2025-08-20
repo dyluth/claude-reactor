@@ -187,12 +187,22 @@ func TestManager_ValidateConfig(t *testing.T) {
 	
 	t.Run("invalid variant", func(t *testing.T) {
 		config := &pkg.Config{
-			Variant: "invalid",
+			Variant: ".invalid-image-name.",  // Actually invalid Docker image name
 		}
 		
 		err := manager.ValidateConfig(config)
 		assert.Error(t, err, "Invalid variant should error")
-		assert.Contains(t, err.Error(), "invalid variant", "Error should mention invalid variant")
+		assert.Contains(t, err.Error(), "invalid image name format", "Error should mention invalid image name")
+	})
+	
+	t.Run("misleading variant names are valid", func(t *testing.T) {
+		// Test case that was causing the original issue - "invalid" is actually a valid Docker image name
+		config := &pkg.Config{
+			Variant: "invalid",  // This is actually valid as a Docker image name
+		}
+		
+		err := manager.ValidateConfig(config)
+		assert.NoError(t, err, "Simple names like 'invalid' are valid Docker image names")
 	})
 	
 	t.Run("all valid variants", func(t *testing.T) {
@@ -350,6 +360,54 @@ func BenchmarkManager_AutoDetectVariant(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = manager.AutoDetectVariant("")
+	}
+}
+
+func TestIsValidDockerImageName(t *testing.T) {
+	tests := []struct {
+		name     string
+		imageName string
+		expected  bool
+	}{
+		// Valid simple images
+		{"ubuntu", "ubuntu", true},
+		{"alpine", "alpine", true},
+		{"nginx", "nginx", true},
+		
+		// Valid images with tags
+		{"ubuntu with tag", "ubuntu:22.04", true},
+		{"alpine with tag", "alpine:3.18", true},
+		{"node with tag", "node:18-alpine", true},
+		
+		// Valid registry images
+		{"docker hub with namespace", "library/ubuntu", true},
+		{"docker hub with namespace and tag", "library/ubuntu:latest", true},
+		{"custom registry", "ghcr.io/dyluth/claude-reactor-base", true},
+		{"custom registry with tag", "ghcr.io/dyluth/claude-reactor-base:latest", true},
+		{"localhost registry", "localhost:5000/myimage", true},
+		{"registry with port", "registry.example.com:443/namespace/image:tag", true},
+		
+		// Valid digests
+		{"image with digest", "ubuntu@sha256:1234567890123456789012345678901234567890123456789012345678901234", true},
+		{"registry image with digest", "ghcr.io/org/repo@sha256:1234567890123456789012345678901234567890123456789012345678901234", true},
+		
+		// Invalid cases
+		{"empty string", "", false},
+		{"starts with dash", "-invalid", false},
+		{"ends with dash", "invalid-", false},
+		{"starts with dot", ".invalid", false},
+		{"ends with dot", "invalid.", false},
+		{"consecutive dots", "invalid..image", false},
+		{"consecutive slashes", "invalid//image", false},
+		{"uppercase in name", "Ubuntu", false},
+		{"invalid tag format", "ubuntu:TAG-", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidDockerImageName(tt.imageName)
+			assert.Equal(t, tt.expected, result, "Image name: %s", tt.imageName)
+		})
 	}
 }
 

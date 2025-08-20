@@ -153,30 +153,45 @@ func newRunCmd(app *pkg.AppContainer) *cobra.Command {
 	var runCmd = &cobra.Command{
 		Use:   "run",
 		Short: "Start and connect to a Claude CLI container",
-		Long: `Start and connect to a Claude CLI container with the specified variant.
+		Long: `Start and connect to a Claude CLI container with the specified image.
 This will auto-detect project type, build the container if needed, and connect you
 to the Claude CLI running inside the container.
 
+Built-in Images: base, go, full, cloud, k8s (auto-built and optimized)
+Custom Images: Any Docker Hub or registry image (validated for compatibility)
+
 Examples:
-  claude-reactor run                    # Auto-detect variant and run
-  claude-reactor run --variant go       # Use Go toolchain variant
-  claude-reactor run --shell            # Launch interactive shell instead
-  claude-reactor run --danger           # Enable danger mode (skip permissions)
-  claude-reactor run --account work     # Use specific account configuration
-  claude-reactor run --persist=false    # Remove container when finished
+  claude-reactor run                           # Auto-detect image and run
+  claude-reactor run --image go                # Use Go toolchain image
+  claude-reactor run --image ubuntu:22.04     # Use custom Ubuntu image
+  claude-reactor run --image ghcr.io/org/dev  # Use custom registry image
+  claude-reactor run --shell                  # Launch interactive shell instead
+  claude-reactor run --danger                 # Enable danger mode (skip permissions)
+  claude-reactor run --account work           # Use specific account configuration
+  claude-reactor run --persist=false          # Remove container when finished
   
   # Registry control (v2 images)
-  claude-reactor run --dev              # Force local build (disable registry)
-  claude-reactor run --registry-off     # Disable registry completely
-  claude-reactor run --pull-latest      # Force pull latest from registry
-  claude-reactor run --continue=false   # Disable conversation continuation`,
+  claude-reactor run --dev                    # Force local build (disable registry)
+  claude-reactor run --registry-off           # Disable registry completely
+  claude-reactor run --pull-latest            # Force pull latest from registry
+  claude-reactor run --continue=false         # Disable conversation continuation
+
+Custom Image Requirements:
+  • Must be Linux-based (linux/amd64 or linux/arm64)
+  • Must have Claude CLI installed: 'claude --version' should work
+  • Recommended tools: git, curl, make, nano (warnings shown if missing)
+
+Troubleshooting:
+  Use 'claude-reactor debug info' to check Docker connectivity
+  Use '--verbose' flag for detailed validation information
+  Validation results are cached for 30 days in ~/.claude-reactor/image-cache/`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runContainer(cmd, app)
 		},
 	}
 
 	// Run command flags
-	runCmd.Flags().StringP("variant", "", "", "Container variant (base, go, full, cloud, k8s)")
+	runCmd.Flags().StringP("image", "", "", "Container image (base, go, full, cloud, k8s, or custom Docker image)")
 	runCmd.Flags().StringP("account", "", "", "Claude account to use")
 	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode (--dangerously-skip-permissions)")
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
@@ -312,14 +327,15 @@ func newCleanCmd(app *pkg.AppContainer) *cobra.Command {
 	var cleanCmd = &cobra.Command{
 		Use:   "clean",
 		Short: "Clean up containers and images",
-		Long: `Remove stopped containers and optionally clean up images.
+		Long: `Remove stopped containers and optionally clean up images and cache.
 Use --all to remove all claude-reactor containers across all accounts.
 
 Examples:
   claude-reactor clean                # Remove current project container
   claude-reactor clean --all          # Remove all claude-reactor containers
   claude-reactor clean --images       # Also remove project images
-  claude-reactor clean --all --images # Remove everything (containers + images)`,
+  claude-reactor clean --cache        # Also clear image validation cache
+  claude-reactor clean --all --images --cache # Remove everything (containers + images + cache)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cleanContainers(cmd, app)
 		},
@@ -327,6 +343,7 @@ Examples:
 
 	cleanCmd.Flags().BoolP("all", "", false, "Clean all claude-reactor containers")
 	cleanCmd.Flags().BoolP("images", "", false, "Also remove images")
+	cleanCmd.Flags().BoolP("cache", "", false, "Also clear image validation cache")
 
 	return cleanCmd
 }
@@ -335,13 +352,25 @@ func newDebugCmd(app *pkg.AppContainer) *cobra.Command {
 	var debugCmd = &cobra.Command{
 		Use:   "debug",
 		Short: "Debug information and troubleshooting",
-		Long:  "Provide debug information and troubleshooting tools.",
+		Long:  "Provide debug information and troubleshooting tools for claude-reactor.",
+		Example: `# Show system information
+claude-reactor debug info
+
+# Test custom image compatibility
+claude-reactor debug image ubuntu:22.04
+
+# Clear validation cache
+claude-reactor debug cache clear
+
+# Show cache statistics
+claude-reactor debug cache info`,
 	}
 
 	debugCmd.AddCommand(
 		&cobra.Command{
 			Use:   "info",
 			Short: "Show system information",
+			Long:  "Display comprehensive system information including Docker connectivity, architecture, and version details.",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				app.Logger.Info("=== Claude-Reactor Debug Info ===")
 				
@@ -379,8 +408,124 @@ func newDebugCmd(app *pkg.AppContainer) *cobra.Command {
 				return nil
 			},
 		},
-	)
+		&cobra.Command{
+			Use:   "image [image-name]",
+			Short: "Test custom image compatibility",
+			Long: `Test a custom Docker image for claude-reactor compatibility.
+This will validate platform support, Claude CLI availability, and recommended packages.
+Results are the same as what you'd see during normal container startup.`,
+			Example: `# Test Ubuntu image
+claude-reactor debug image ubuntu:22.04
 
+# Test with detailed output
+claude-reactor debug image python:3.11 --verbose
+
+# Test registry image
+claude-reactor debug image ghcr.io/user/project:latest`,
+			Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				imageName := args[0]
+				ctx := cmd.Context()
+				
+				app.Logger.Infof("🔍 Testing image compatibility: %s", imageName)
+				
+				// Test image validation
+				result, err := app.ImageValidator.ValidateImage(ctx, imageName, true)
+				if err != nil {
+					cmd.Printf("❌ Validation failed: %v\n", err)
+					return err
+				}
+				
+				cmd.Printf("\n=== Image Validation Results ===\n")
+				cmd.Printf("Image: %s\n", imageName)
+				cmd.Printf("Digest: %s\n", result.Digest)
+				cmd.Printf("Architecture: %s\n", result.Architecture)
+				cmd.Printf("Platform: %s\n", result.Platform)
+				cmd.Printf("Size: %.2f MB\n", float64(result.Size)/(1024*1024))
+				cmd.Printf("Compatible: %t\n", result.Compatible)
+				cmd.Printf("Has Claude CLI: %t\n", result.HasClaude)
+				cmd.Printf("Is Linux: %t\n", result.IsLinux)
+				
+				if len(result.Warnings) > 0 {
+					cmd.Printf("\n⚠️ Warnings:\n")
+					for _, warning := range result.Warnings {
+						cmd.Printf("  - %s\n", warning)
+					}
+				}
+				
+				if len(result.Errors) > 0 {
+					cmd.Printf("\n❌ Errors:\n")
+					for _, errMsg := range result.Errors {
+						cmd.Printf("  - %s\n", errMsg)
+					}
+				}
+				
+				// Show package analysis if available
+				if packages, ok := result.Metadata["packages"].(map[string]interface{}); ok {
+					cmd.Printf("\n📦 Package Analysis:\n")
+					if available, ok := packages["available"].([]string); ok {
+						cmd.Printf("Available tools (%d): %s\n", len(available), strings.Join(available, ", "))
+					}
+					if missing, ok := packages["missing_high_priority"].([]string); ok && len(missing) > 0 {
+						cmd.Printf("Missing high-priority tools: %s\n", strings.Join(missing, ", "))
+					}
+					if totalChecked, ok := packages["total_checked"].(int); ok {
+						if totalAvailable, ok := packages["total_available"].(int); ok {
+							cmd.Printf("Coverage: %d/%d recommended tools available\n", totalAvailable, totalChecked)
+						}
+					}
+				}
+				
+				if result.Compatible {
+					cmd.Printf("\n✅ Image is compatible with claude-reactor!\n")
+				} else {
+					cmd.Printf("\n❌ Image is not compatible. See errors above.\n")
+				}
+				
+				return nil
+			},
+		},
+	)
+	
+	// Create cache subcommand with subcommands
+	cacheCmd := &cobra.Command{
+		Use:   "cache",
+		Short: "Manage image validation cache",
+		Long:  "View cache statistics and clear cached validation results.",
+	}
+	
+	cacheCmd.AddCommand(
+		&cobra.Command{
+			Use:   "info",
+			Short: "Show cache statistics",
+			Long:  "Display information about cached image validation results.",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				// This would require implementing cache info functionality
+				// For now, just show a placeholder
+				cmd.Printf("Cache directory: ~/.claude-reactor/image-cache/\n")
+				cmd.Printf("Cache duration: 30+ days (based on image digest)\n")
+				cmd.Printf("Use 'claude-reactor debug cache clear' to clear cache\n")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "clear",
+			Short: "Clear validation cache",
+			Long:  "Remove all cached image validation results, forcing re-validation on next use.",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				err := app.ImageValidator.ClearCache()
+				if err != nil {
+					cmd.Printf("❌ Failed to clear cache: %v\n", err)
+					return err
+				}
+				cmd.Printf("✅ Image validation cache cleared successfully\n")
+				return nil
+			},
+		},
+	)
+	
+	debugCmd.AddCommand(cacheCmd)
+	
 	return debugCmd
 }
 
@@ -413,7 +558,7 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	ctx := cmd.Context()
 	
 	// Parse command flags
-	variant, _ := cmd.Flags().GetString("variant")
+	image, _ := cmd.Flags().GetString("image")
 	account, _ := cmd.Flags().GetString("account")
 	danger, _ := cmd.Flags().GetBool("danger")
 	shell, _ := cmd.Flags().GetBool("shell")
@@ -439,8 +584,8 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	}
 	
 	// Override config with command-line flags
-	if variant != "" {
-		config.Variant = variant
+	if image != "" {
+		config.Variant = image
 	}
 	if account != "" {
 		config.Account = account
@@ -452,19 +597,71 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		app.Logger.Info("🔍 Auto-detecting project type...")
 		detectedVariant, err := app.ConfigMgr.AutoDetectVariant("")
 		if err != nil {
-			app.Logger.Warnf("Failed to auto-detect variant: %v", err)
-			app.Logger.Info("💡 Defaulting to 'base' variant. Use --variant flag to specify manually")
+			app.Logger.Warnf("Failed to auto-detect image: %v", err)
+			app.Logger.Info("💡 Defaulting to 'base' image. Use --image flag to specify manually")
 			config.Variant = "base"
 		} else {
 			config.Variant = detectedVariant
-			app.Logger.Infof("✅ Auto-detected variant: %s", config.Variant)
+			app.Logger.Infof("✅ Auto-detected image: %s", config.Variant)
 		}
 	}
 	
 	// Validate configuration
 	app.Logger.Info("✅ Validating configuration...")
 	if err := app.ConfigMgr.ValidateConfig(config); err != nil {
-		return fmt.Errorf("invalid configuration: %w. Try using --variant with one of: base, go, full, cloud, k8s", err)
+		return fmt.Errorf("invalid configuration: %w. Try using --image with one of: base, go, full, cloud, k8s, or a custom Docker image", err)
+	}
+	
+	// Step 1.5: Validate custom Docker images
+	builtinVariants := []string{"base", "go", "full", "cloud", "k8s"}
+	isBuiltinVariant := false
+	for _, variant := range builtinVariants {
+		if config.Variant == variant {
+			isBuiltinVariant = true
+			break
+		}
+	}
+	
+	if !isBuiltinVariant {
+		app.Logger.Infof("🔍 Validating custom Docker image: %s (compatibility + package analysis)", config.Variant)
+		
+		// Pull image if needed and validate it
+		validationResult, err := app.ImageValidator.ValidateImage(ctx, config.Variant, true)
+		if err != nil {
+			return fmt.Errorf("failed to validate custom image '%s': %w. Ensure the image exists and is accessible", config.Variant, err)
+		}
+		
+		if !validationResult.Compatible {
+			app.Logger.Error("❌ Custom image validation failed:")
+			for _, errMsg := range validationResult.Errors {
+				app.Logger.Errorf("  - %s", errMsg)
+			}
+			return fmt.Errorf("custom image '%s' is not compatible with claude-reactor. See errors above", config.Variant)
+		}
+		
+		// Show warnings if any
+		if len(validationResult.Warnings) > 0 {
+			app.Logger.Warn("⚠️ Custom image warnings:")
+			for _, warning := range validationResult.Warnings {
+				app.Logger.Warnf("  - %s", warning)
+			}
+		}
+		
+		app.Logger.Infof("✅ Custom image validated successfully: %s (digest: %.12s)", 
+			config.Variant, validationResult.Digest)
+		
+		if validationResult.HasClaude {
+			app.Logger.Debug("✅ Claude CLI detected in custom image")
+		}
+		
+		// Show package information if available
+		if packages, ok := validationResult.Metadata["packages"].(map[string]interface{}); ok {
+			if totalAvailable, ok := packages["total_available"].(int); ok {
+				if totalChecked, ok := packages["total_checked"].(int); ok {
+					app.Logger.Infof("📦 Package analysis: %d/%d recommended tools available", totalAvailable, totalChecked)
+				}
+			}
+		}
 	}
 	
 	// Log registry configuration if relevant
@@ -476,7 +673,7 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		app.Logger.Info("📦 Registry: Force pulling latest images from registry")
 	}
 	
-	app.Logger.Infof("📋 Configuration: variant=%s, account=%s, danger=%t, shell=%t, persist=%t", 
+	app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t", 
 		config.Variant, config.Account, config.DangerMode, shell, persist)
 	
 	// Step 2: Generate container and image names
@@ -672,6 +869,7 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	
 	all, _ := cmd.Flags().GetBool("all")
 	images, _ := cmd.Flags().GetBool("images")
+	cache, _ := cmd.Flags().GetBool("cache")
 	
 	app.Logger.Info("🧹 Cleaning up containers...")
 	
@@ -736,6 +934,21 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 		
 		app.Logger.Info("✅ Image cleanup completed successfully")
 		app.Logger.Info("💡 Images will be rebuilt automatically on next run")
+	}
+	
+	if cache {
+		app.Logger.Info("🗄️ Clearing image validation cache...")
+		
+		err := app.ImageValidator.ClearCache()
+		if err != nil {
+			return fmt.Errorf("failed to clear image validation cache: %w. You can manually delete ~/.claude-reactor/image-cache/", err)
+		}
+		
+		// Also clear session warnings so warnings will show again
+		app.ImageValidator.ClearSessionWarnings()
+		
+		app.Logger.Info("✅ Image validation cache cleared successfully")
+		app.Logger.Info("💡 Custom images will be re-validated and warnings reshown on next use")
 	}
 	
 	return nil
