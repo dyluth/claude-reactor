@@ -317,27 +317,27 @@ test-persistence: ## Test Claude CLI configuration persistence across container 
 .PHONY: run-base
 run-base: ## Run base variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting base variant container...$(NC)"
-	./claude-reactor --variant base
+	./claude-reactor --image base
 
 .PHONY: run-go
 run-go: ## Run Go variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting Go variant container...$(NC)"
-	./claude-reactor --variant go
+	./claude-reactor --image go
 
 .PHONY: run-full
 run-full: ## Run full variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting full variant container...$(NC)"
-	./claude-reactor --variant full
+	./claude-reactor --image full
 
 .PHONY: run-cloud
 run-cloud: ## Run cloud variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting cloud variant container...$(NC)"
-	./claude-reactor --variant cloud
+	./claude-reactor --image cloud
 
 .PHONY: run-k8s
 run-k8s: ## Run Kubernetes variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting Kubernetes variant container...$(NC)"
-	./claude-reactor --variant k8s
+	./claude-reactor --image k8s
 
 .PHONY: run
 run: ## Run container with auto-detected or saved variant (delegates to claude-reactor)

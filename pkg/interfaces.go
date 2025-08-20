@@ -1087,6 +1087,37 @@ type HotReloadMetrics struct {
 	CPUUsage float64 `json:"cpuUsage,omitempty"`
 }
 
+// =============================================================================
+// Image Validation Interfaces
+// =============================================================================
+
+// ImageValidator handles Docker image validation for custom images
+type ImageValidator interface {
+	// ValidateImage validates a Docker image for claude-reactor compatibility
+	ValidateImage(ctx context.Context, imageName string, pullIfNeeded bool) (*ImageValidationResult, error)
+	
+	// ClearCache removes all cached validation results
+	ClearCache() error
+	
+	// ClearSessionWarnings resets session warning tracking
+	ClearSessionWarnings()
+}
+
+// ImageValidationResult represents the result of image validation
+type ImageValidationResult struct {
+	Compatible    bool                   `json:"compatible"`
+	Digest        string                 `json:"digest"`
+	Architecture  string                 `json:"architecture"`
+	Platform      string                 `json:"platform"`
+	Size          int64                  `json:"size"`
+	HasClaude     bool                   `json:"has_claude"`
+	IsLinux       bool                   `json:"is_linux"`
+	Warnings      []string               `json:"warnings"`
+	Errors        []string               `json:"errors"`
+	ValidatedAt   string                 `json:"validated_at"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // AppContainer holds all application dependencies
 type AppContainer struct {
 	ArchDetector    ArchitectureDetector
@@ -1101,5 +1132,6 @@ type AppContainer struct {
 	BuildTrigger    BuildTrigger
 	ContainerSync   ContainerSync
 	HotReloadMgr    HotReloadManager
+	ImageValidator  ImageValidator
 	Logger          Logger
 }

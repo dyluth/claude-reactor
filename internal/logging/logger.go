@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	
+
 	"claude-reactor/pkg"
 )
 
@@ -14,10 +14,9 @@ type logger struct {
 	*logrus.Logger
 }
 
-// NewLogger creates a new structured logger with appropriate configuration
-func NewLogger() pkg.Logger {
+func NewLoggerWithLevel(level logrus.Level) pkg.Logger {
 	l := logrus.New()
-	
+
 	// Set output format
 	l.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp:   true,
@@ -25,22 +24,27 @@ func NewLogger() pkg.Logger {
 		ForceColors:     true,
 		DisableQuote:    true,
 	})
-	
-	// Set log level based on environment
-	level := getLogLevel()
 	l.SetLevel(level)
-	
+
 	// Set output to stdout (not stderr) for better CLI experience
 	l.SetOutput(os.Stdout)
-	
+
 	return &logger{Logger: l}
+
+}
+
+// NewLogger creates a new structured logger with appropriate configuration
+func NewLogger() pkg.Logger {
+	// Set log level based on environment
+	level := getLogLevel()
+	return NewLoggerWithLevel(level)
 }
 
 // getLogLevel determines the appropriate log level from environment variables
 func getLogLevel() logrus.Level {
 	// Check for CLAUDE_REACTOR_LOG_LEVEL environment variable
 	envLevel := strings.ToUpper(os.Getenv("CLAUDE_REACTOR_LOG_LEVEL"))
-	
+
 	switch envLevel {
 	case "DEBUG":
 		return logrus.DebugLevel
