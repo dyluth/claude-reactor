@@ -910,3 +910,11 @@ func (m *manager) BuildImageWithRegistry(ctx context.Context, variant, platform 
 	return m.BuildImage(ctx, variant, platform)
 }
 
+// GetClient returns the underlying Docker client for advanced operations
+func (m *manager) GetClient() *client.Client {
+	if c, ok := m.client.(*client.Client); ok {
+		return c
+	}
+	return nil
+}
+

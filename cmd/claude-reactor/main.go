@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -139,6 +141,8 @@ support, and production-ready tooling.`,
 		newCleanCmd(app),
 		newDevContainerCmd(app),
 		newTemplateCmd(app),
+		newDependencyCmd(app),
+		newHotReloadCmd(app),
 		newDebugCmd(app),
 	)
 
@@ -2157,4 +2161,990 @@ func validateTemplate(cmd *cobra.Command, args []string, app *pkg.AppContainer) 
 	}
 	
 	return nil
+}
+
+// newDependencyCmd creates the dependency management command tree
+func newDependencyCmd(app *pkg.AppContainer) *cobra.Command {
+	var dependencyCmd = &cobra.Command{
+		Use:   "dependency",
+		Short: "Dependency management and package manager operations",
+		Long: `Manage dependencies across all supported package managers.
+
+Supports unified operations for:
+• Go Modules (go.mod, go.sum)  
+• Cargo (Cargo.toml, Cargo.lock)
+• npm (package.json, package-lock.json)
+• Yarn (package.json, yarn.lock)
+• pnpm (package.json, pnpm-lock.yaml)
+• pip (requirements.txt, setup.py, pyproject.toml)
+• Poetry (pyproject.toml, poetry.lock)
+• Pipenv (Pipfile, Pipfile.lock)
+• Maven (pom.xml)
+• Gradle (build.gradle, build.gradle.kts)
+
+Examples:
+  claude-reactor dependency detect     # Detect package managers in project
+  claude-reactor dependency list      # List all dependencies
+  claude-reactor dependency install   # Install dependencies for all package managers
+  claude-reactor dependency update    # Update dependencies to latest versions
+  claude-reactor dependency audit     # Scan for security vulnerabilities
+  claude-reactor dependency outdated  # Check for outdated dependencies
+  claude-reactor dependency report    # Generate comprehensive dependency report`,
+		Aliases: []string{"deps", "dep"},
+	}
+
+	// Add subcommands
+	dependencyCmd.AddCommand(
+		newDependencyDetectCmd(app),
+		newDependencyListCmd(app),
+		newDependencyInstallCmd(app),
+		newDependencyUpdateCmd(app),
+		newDependencyAuditCmd(app),
+		newDependencyOutdatedCmd(app),
+		newDependencyReportCmd(app),
+		newDependencyCleanCmd(app),
+	)
+
+	return dependencyCmd
+}
+
+// newDependencyDetectCmd detects package managers in the current project
+func newDependencyDetectCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "detect [path]",
+		Short: "Detect package managers in project",
+		Long: `Detect package managers and their configuration files in the current or specified project directory.
+
+Shows available package managers on the system and detected package managers in the project.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("🔍 Detecting package managers in: %s", abs)
+			fmt.Printf("📦 Detecting package managers in: %s\n\n", abs)
+
+			// Detect project package managers
+			packageManagers, dependencies, err := app.DependencyMgr.DetectProjectDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to detect dependencies: %w", err)
+			}
+
+			if len(packageManagers) == 0 {
+				fmt.Printf("❌ No package managers detected in project\n\n")
+			} else {
+				fmt.Printf("✅ Found %d package manager(s):\n", len(packageManagers))
+				for _, pm := range packageManagers {
+					status := "❌ not available"
+					if pm.Available {
+						status = "✅ available"
+					}
+					
+					version := ""
+					if pm.Version != "" {
+						version = fmt.Sprintf(" (v%s)", pm.Version)
+					}
+					
+					fmt.Printf("  • %s%s - %s\n", pm.Name, version, status)
+					if len(pm.ConfigFiles) > 0 {
+						fmt.Printf("    Config files: %s\n", strings.Join(pm.ConfigFiles, ", "))
+					}
+					if len(pm.LockFiles) > 0 {
+						fmt.Printf("    Lock files: %s\n", strings.Join(pm.LockFiles, ", "))
+					}
+				}
+				fmt.Printf("\n📊 Total dependencies detected: %d\n", len(dependencies))
+			}
+
+			return nil
+		},
+	}
+}
+
+// newDependencyListCmd lists all dependencies in the project
+func newDependencyListCmd(app *pkg.AppContainer) *cobra.Command {
+	var showDetails bool
+	var packageManager string
+	
+	cmd := &cobra.Command{
+		Use:   "list [path]",
+		Short: "List all project dependencies",
+		Long: `List dependencies from all detected package managers in the project.
+
+Shows dependency name, version, type (direct/indirect), and package manager.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			app.Logger.Infof("📋 Listing dependencies in: %s", projectPath)
+
+			packageManagers, dependencies, err := app.DependencyMgr.DetectProjectDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to detect dependencies: %w", err)
+			}
+
+			if len(packageManagers) == 0 {
+				fmt.Printf("❌ No package managers detected\n")
+				return nil
+			}
+
+			// Filter by package manager if specified
+			if packageManager != "" {
+				var filtered []*pkg.DependencyInfo
+				for _, dep := range dependencies {
+					if dep.PackageManager == packageManager {
+						filtered = append(filtered, dep)
+					}
+				}
+				dependencies = filtered
+			}
+
+			if len(dependencies) == 0 {
+				fmt.Printf("❌ No dependencies found\n")
+				return nil
+			}
+
+			fmt.Printf("📋 Found %d dependencies across %d package managers:\n\n", len(dependencies), len(packageManagers))
+
+			// Group by package manager
+			depsByPM := make(map[string][]*pkg.DependencyInfo)
+			for _, dep := range dependencies {
+				depsByPM[dep.PackageManager] = append(depsByPM[dep.PackageManager], dep)
+			}
+
+			for pmType, deps := range depsByPM {
+				if len(deps) == 0 {
+					continue
+				}
+				
+				fmt.Printf("🔧 %s (%d dependencies):\n", strings.ToUpper(pmType), len(deps))
+				for _, dep := range deps {
+					typeIcon := "📦"
+					if dep.Type == "dev" {
+						typeIcon = "🛠️"
+					} else if dep.Type == "indirect" {
+						typeIcon = "🔗"
+					}
+					
+					fmt.Printf("  %s %s@%s", typeIcon, dep.Name, dep.CurrentVersion)
+					
+					if showDetails {
+						if dep.Description != "" {
+							fmt.Printf(" - %s", dep.Description)
+						}
+						if dep.License != "" {
+							fmt.Printf(" [%s]", dep.License)
+						}
+						if dep.IsOutdated {
+							fmt.Printf(" (outdated)")
+						}
+						if dep.HasVulnerability {
+							fmt.Printf(" ⚠️ vulnerable")
+						}
+					}
+					fmt.Printf("\n")
+				}
+				fmt.Printf("\n")
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&showDetails, "details", "d", false, "Show detailed dependency information")
+	cmd.Flags().StringVarP(&packageManager, "manager", "m", "", "Filter by package manager (go, npm, cargo, etc.)")
+
+	return cmd
+}
+
+// newDependencyInstallCmd installs dependencies for all package managers
+func newDependencyInstallCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "install [path]",
+		Short: "Install dependencies for all package managers",
+		Long: `Install dependencies for all detected package managers in the project.
+
+Runs the appropriate install command for each package manager found.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			app.Logger.Infof("📦 Installing dependencies in: %s", projectPath)
+			fmt.Printf("📦 Installing dependencies in: %s\n\n", projectPath)
+
+			results, err := app.DependencyMgr.InstallAllDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to install dependencies: %w", err)
+			}
+
+			if len(results) == 0 {
+				fmt.Printf("❌ No package managers found\n")
+				return nil
+			}
+
+			successCount := 0
+			for _, result := range results {
+				if result.Success {
+					fmt.Printf("✅ %s: installed successfully (%s)\n", result.PackageManager, result.Duration)
+					successCount++
+				} else {
+					fmt.Printf("❌ %s: failed - %s\n", result.PackageManager, result.Error)
+				}
+			}
+
+			fmt.Printf("\n📊 Summary: %d/%d package managers installed successfully\n", successCount, len(results))
+
+			return nil
+		},
+	}
+}
+
+// newDependencyUpdateCmd updates dependencies for detected package managers
+func newDependencyUpdateCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "update [path]",
+		Short: "Update dependencies for detected package managers",
+		Long: `Update dependencies for all detected package managers in the current or specified project directory.
+		
+This will run the appropriate update command for each detected package manager (npm update, cargo update, etc.).`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("⬆️ Updating dependencies in: %s", abs)
+			fmt.Printf("⬆️ Updating dependencies in: %s\n\n", abs)
+
+			// Update dependencies for all detected package managers
+			results, err := app.DependencyMgr.UpdateAllDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to update dependencies: %w", err)
+			}
+
+			if len(results) == 0 {
+				fmt.Printf("❌ No package managers found to update\n")
+				return nil
+			}
+
+			// Display results
+			successCount := 0
+			for _, result := range results {
+				if result.Success {
+					successCount++
+					fmt.Printf("✅ %s: updated successfully (took %s)\n", result.PackageManager, result.Duration)
+				} else {
+					fmt.Printf("❌ %s: failed - %s\n", result.PackageManager, result.Error)
+				}
+			}
+
+			fmt.Printf("\n📊 Summary: %d/%d package managers updated successfully\n", successCount, len(results))
+
+			return nil
+		},
+	}
+}
+
+// newDependencyAuditCmd audits dependencies for vulnerabilities
+func newDependencyAuditCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "audit [path]",
+		Short: "Audit dependencies for security vulnerabilities",
+		Long: `Audit dependencies for security vulnerabilities using appropriate tools for each package manager.
+		
+This will run security audits using tools like npm audit, cargo-audit, pip-audit, etc.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("🔍 Auditing dependencies in: %s", abs)
+			fmt.Printf("🔍 Auditing dependencies for vulnerabilities in: %s\n\n", abs)
+
+			// Audit dependencies for all detected package managers
+			auditResults, err := app.DependencyMgr.AuditAllDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to audit dependencies: %w", err)
+			}
+
+			if len(auditResults) == 0 {
+				fmt.Printf("✅ No vulnerabilities found or no compatible audit tools available\n")
+				return nil
+			}
+
+			// Display vulnerability results
+			fmt.Printf("🚨 Found %d vulnerabilities:\n\n", len(auditResults))
+
+			criticalCount := 0
+			highCount := 0
+			moderateCount := 0
+			lowCount := 0
+
+			for _, vuln := range auditResults {
+				severityIcon := "⚠️"
+				switch strings.ToLower(vuln.Severity) {
+				case "critical":
+					severityIcon = "🔴"
+					criticalCount++
+				case "high":
+					severityIcon = "🟠"
+					highCount++
+				case "moderate":
+					severityIcon = "🟡"
+					moderateCount++
+				case "low":
+					severityIcon = "🟢"
+					lowCount++
+				}
+
+				fmt.Printf("%s %s - %s\n", severityIcon, vuln.ID, vuln.Title)
+				fmt.Printf("   Description: %s\n", vuln.Description)
+				if vuln.FixedIn != "" {
+					fmt.Printf("   Fixed in: %s\n", vuln.FixedIn)
+				}
+				if vuln.Reference != "" {
+					fmt.Printf("   Reference: %s\n", vuln.Reference)
+				}
+				fmt.Println()
+			}
+
+			fmt.Printf("📊 Vulnerability Summary:\n")
+			fmt.Printf("   🔴 Critical: %d\n", criticalCount)
+			fmt.Printf("   🟠 High: %d\n", highCount)
+			fmt.Printf("   🟡 Moderate: %d\n", moderateCount)
+			fmt.Printf("   🟢 Low: %d\n", lowCount)
+
+			return nil
+		},
+	}
+}
+
+// newDependencyOutdatedCmd shows outdated dependencies
+func newDependencyOutdatedCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "outdated [path]",
+		Short: "Show outdated dependencies",
+		Long: `Show outdated dependencies for all detected package managers in the current or specified project directory.
+		
+This will check for available updates using tools like npm outdated, cargo-outdated, pip list --outdated, etc.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("📊 Checking outdated dependencies in: %s", abs)
+			fmt.Printf("📊 Checking outdated dependencies in: %s\n\n", abs)
+
+			// Get outdated dependencies for all detected package managers
+			outdatedDeps, err := app.DependencyMgr.GetAllOutdatedDependencies(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to check outdated dependencies: %w", err)
+			}
+
+			if len(outdatedDeps) == 0 {
+				fmt.Printf("✅ All dependencies are up to date!\n")
+				return nil
+			}
+
+			// Group by package manager
+			pmGroups := make(map[string][]*pkg.DependencyInfo)
+			for _, dep := range outdatedDeps {
+				pmGroups[dep.PackageManager] = append(pmGroups[dep.PackageManager], dep)
+			}
+
+			fmt.Printf("📋 Found %d outdated dependencies:\n\n", len(outdatedDeps))
+
+			for pmType, deps := range pmGroups {
+				fmt.Printf("📦 %s:\n", strings.ToUpper(pmType))
+				for _, dep := range deps {
+					fmt.Printf("   %s: %s → %s", dep.Name, dep.CurrentVersion, dep.LatestVersion)
+					if dep.RequestedVersion != "" && dep.RequestedVersion != dep.CurrentVersion {
+						fmt.Printf(" (requested: %s)", dep.RequestedVersion)
+					}
+					fmt.Println()
+				}
+				fmt.Println()
+			}
+
+			return nil
+		},
+	}
+}
+
+// newDependencyReportCmd generates comprehensive dependency reports
+func newDependencyReportCmd(app *pkg.AppContainer) *cobra.Command {
+	var outputFormat string
+
+	cmd := &cobra.Command{
+		Use:   "report [path]",
+		Short: "Generate comprehensive dependency report",
+		Long: `Generate a comprehensive dependency report including dependency trees, vulnerability analysis,
+outdated packages, and package manager health for the current or specified project directory.
+
+Output formats:
+  - text: Human-readable text format (default)
+  - json: Machine-readable JSON format`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("📊 Generating dependency report for: %s", abs)
+
+			// Generate comprehensive report
+			report, err := app.DependencyMgr.GenerateDependencyReport(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to generate dependency report: %w", err)
+			}
+
+			// Output in requested format
+			if outputFormat == "json" {
+				encoder := json.NewEncoder(os.Stdout)
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(report)
+			}
+
+			// Text format output
+			fmt.Printf("📊 Dependency Report for: %s\n", abs)
+			fmt.Printf("Generated: %s\n\n", report.GeneratedAt)
+
+			// Summary
+			fmt.Printf("📋 Summary:\n")
+			fmt.Printf("   Total Dependencies: %d\n", report.TotalDependencies)
+			fmt.Printf("   Direct Dependencies: %d\n", report.DirectDependencies)
+			fmt.Printf("   Indirect Dependencies: %d\n", report.IndirectDependencies)
+			fmt.Printf("   Outdated Dependencies: %d\n", report.OutdatedDependencies)
+			fmt.Printf("   Vulnerabilities: %d\n", report.Vulnerabilities)
+			fmt.Printf("   Security Score: %.1f/100\n\n", report.SecurityScore)
+
+			// Package Managers
+			fmt.Printf("📦 Detected Package Managers:\n")
+			for _, pm := range report.PackageManagers {
+				statusIcon := "✅"
+				if !pm.Available {
+					statusIcon = "❌"
+				}
+				fmt.Printf("   %s %s (%s)\n", statusIcon, pm.Name, pm.Version)
+				for _, configFile := range pm.ConfigFiles {
+					fmt.Printf("     📄 %s\n", configFile)
+				}
+			}
+
+			if report.Vulnerabilities > 0 {
+				fmt.Printf("\n🚨 Security Vulnerabilities: %d found\n", report.Vulnerabilities)
+				fmt.Printf("   See 'dependency audit' for detailed vulnerability information\n")
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputFormat, "format", "f", "text", "Output format (text|json)")
+
+	return cmd
+}
+
+// newDependencyCleanCmd cleans package manager caches
+func newDependencyCleanCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "clean [path]",
+		Short: "Clean package manager caches",
+		Long: `Clean caches for all detected package managers in the current or specified project directory.
+		
+This will run cache cleaning commands like npm cache clean, cargo clean, pip cache purge, etc.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+
+			abs, err := filepath.Abs(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project path: %w", err)
+			}
+
+			app.Logger.Infof("🧹 Cleaning package manager caches in: %s", abs)
+			fmt.Printf("🧹 Cleaning package manager caches in: %s\n\n", abs)
+
+			// Clean caches for all detected package managers
+			results, err := app.DependencyMgr.CleanAllCaches(projectPath)
+			if err != nil {
+				return fmt.Errorf("failed to clean caches: %w", err)
+			}
+
+			if len(results) == 0 {
+				fmt.Printf("❌ No package managers found to clean\n")
+				return nil
+			}
+
+			// Display results
+			successCount := 0
+			for _, result := range results {
+				if result.Success {
+					successCount++
+					fmt.Printf("✅ %s: cache cleaned successfully (took %s)\n", result.PackageManager, result.Duration)
+				} else {
+					fmt.Printf("❌ %s: failed - %s\n", result.PackageManager, result.Error)
+				}
+			}
+
+			fmt.Printf("\n📊 Summary: %d/%d package managers cleaned successfully\n", successCount, len(results))
+
+			return nil
+		},
+	}
+}
+
+// newHotReloadCmd creates the hot reload command with subcommands
+func newHotReloadCmd(app *pkg.AppContainer) *cobra.Command {
+	var hotReloadCmd = &cobra.Command{
+		Use:   "hotreload",
+		Short: "Hot reload functionality for faster development cycles",
+		Long: `Hot reload provides automatic file watching, building, and container synchronization
+for faster development cycles. Changes to your project files are automatically detected,
+built (if needed), and synchronized with the running container.
+
+This feature supports multiple project types including Go, Node.js, Python, Rust, and Java.`,
+	}
+
+	// Command flags
+	var (
+		hotReloadContainerFlag string
+		hotReloadWatchPatternsFlag []string
+		hotReloadIgnorePatternsFlag []string
+		hotReloadDebounceFlag int
+		hotReloadDisableBuildFlag bool
+		hotReloadDisableSyncFlag bool
+		hotReloadVerboseFlag bool
+	)
+
+	// Start command
+	var hotReloadStartCmd = &cobra.Command{
+		Use:   "start [project-path]",
+		Short: "Start hot reload for a project",
+		Long: `Start hot reload monitoring for a project. This will:
+
+1. Auto-detect the project type (Go, Node.js, Python, etc.)
+2. Set up file watching with appropriate patterns
+3. Configure build triggers for the detected language
+4. Start container synchronization for fast file updates
+
+If no project path is specified, the current directory is used.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+
+			// Determine project path
+			projectPath := "."
+			if len(args) > 0 {
+				projectPath = args[0]
+			}
+			
+			// Get absolute project path
+			if !strings.HasPrefix(projectPath, "/") {
+				if projectPath == "." {
+					cwd, err := os.Getwd()
+					if err != nil {
+						return fmt.Errorf("failed to get current directory: %w", err)
+					}
+					projectPath = cwd
+				} else {
+					cwd, err := os.Getwd()
+					if err != nil {
+						return fmt.Errorf("failed to get current directory: %w", err)
+					}
+					projectPath = cwd + "/" + strings.TrimPrefix(projectPath, "./")
+				}
+			}
+
+			fmt.Printf("🔥 Starting hot reload for project: %s\n", projectPath)
+
+			// Determine container ID
+			containerID := hotReloadContainerFlag
+			if containerID == "" {
+				// Auto-detect running container for this project
+				projectHash := app.DockerMgr.GenerateProjectHash(projectPath)
+				
+				// Get current configuration
+				config, err := app.ConfigMgr.LoadConfig()
+				if err != nil {
+					// Use default account if no config
+					config = &pkg.Config{Account: "default"}
+				}
+				
+				// Generate expected container name
+				variant := config.Variant
+				if variant == "" {
+					variant = "base"
+				}
+				
+				architecture, _ := app.ArchDetector.GetHostArchitecture()
+				containerName := fmt.Sprintf("claude-reactor-v2-%s-%s-%s-%s", variant, architecture, projectHash, config.Account)
+				
+				// Check if container is running
+				running, err := app.DockerMgr.IsContainerRunning(ctx, containerName)
+				if err != nil {
+					return fmt.Errorf("failed to check container status: %w", err)
+				}
+				
+				if !running {
+					return fmt.Errorf("no running container found for project. Please start a container first or specify --container")
+				}
+				
+				// Get container status to get ID
+				status, err := app.DockerMgr.GetContainerStatus(ctx, containerName)
+				if err != nil {
+					return fmt.Errorf("failed to get container status: %w", err)
+				}
+				
+				containerID = status.ID
+				fmt.Printf("🔍 Auto-detected container: %s\n", containerID[:12])
+			}
+
+			// Create hot reload options
+			options := &pkg.HotReloadOptions{
+				AutoDetect:          true,
+				EnableNotifications: true,
+			}
+
+			// Configure watch patterns if specified
+			if len(hotReloadWatchPatternsFlag) > 0 || len(hotReloadIgnorePatternsFlag) > 0 || hotReloadDebounceFlag != 500 {
+				options.WatchConfig = &pkg.WatchConfig{
+					IncludePatterns: hotReloadWatchPatternsFlag,
+					ExcludePatterns: hotReloadIgnorePatternsFlag,
+					DebounceDelay:   hotReloadDebounceFlag,
+					Recursive:       true,
+					EnableBuild:     !hotReloadDisableBuildFlag,
+					EnableHotReload: !hotReloadDisableSyncFlag,
+					ContainerName:   containerID,
+				}
+			}
+
+			// Start hot reload
+			session, err := app.HotReloadMgr.StartHotReload(projectPath, containerID, options)
+			if err != nil {
+				return fmt.Errorf("failed to start hot reload: %w", err)
+			}
+
+			fmt.Printf("✅ Hot reload started successfully\n")
+			fmt.Printf("📋 Session ID: %s\n", session.ID)
+			if session.ProjectInfo != nil {
+				fmt.Printf("📁 Project Type: %s (%s) - %.1f%% confidence\n", 
+					session.ProjectInfo.Type, session.ProjectInfo.Framework, session.ProjectInfo.Confidence)
+			}
+			fmt.Printf("🔍 Watching: %s\n", projectPath)
+			fmt.Printf("📦 Container: %s\n", containerID[:12])
+
+			if hotReloadVerboseFlag {
+				fmt.Print("\n📊 Session Details:\n")
+				fmt.Printf("   Start Time: %s\n", session.StartTime)
+				fmt.Printf("   Status: %s\n", session.Status)
+				if session.WatchSession != nil {
+					fmt.Printf("   Watch Session: %s\n", session.WatchSession.ID)
+				}
+				if session.SyncSession != nil {
+					fmt.Printf("   Sync Session: %s\n", session.SyncSession.ID)
+				}
+			}
+
+			fmt.Print("\n💡 Use 'claude-reactor hotreload status' to monitor progress\n")
+			fmt.Printf("💡 Use 'claude-reactor hotreload stop %s' to stop\n", session.ID)
+			
+			return nil
+		},
+	}
+
+	// Stop command
+	var hotReloadStopCmd = &cobra.Command{
+		Use:   "stop <session-id>",
+		Short: "Stop an active hot reload session",
+		Long: `Stop an active hot reload session by its ID. This will:
+
+1. Stop file watching
+2. Stop build triggers
+3. Stop container synchronization
+4. Clean up session resources
+
+Use 'hotreload list' to see active sessions and their IDs.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
+			
+			fmt.Printf("🛑 Stopping hot reload session: %s\n", sessionID)
+
+			// Stop hot reload
+			err := app.HotReloadMgr.StopHotReload(sessionID)
+			if err != nil {
+				return fmt.Errorf("failed to stop hot reload: %w", err)
+			}
+
+			fmt.Printf("✅ Hot reload session stopped: %s\n", sessionID)
+			return nil
+		},
+	}
+
+	// Status command
+	var hotReloadStatusCmd = &cobra.Command{
+		Use:   "status [session-id]",
+		Short: "Show hot reload status",
+		Long: `Show detailed status information for hot reload sessions.
+
+If a session ID is provided, shows detailed status for that specific session.
+If no session ID is provided, shows a summary of all active sessions.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				// Show detailed status for specific session
+				sessionID := args[0]
+				status, err := app.HotReloadMgr.GetHotReloadStatus(sessionID)
+				if err != nil {
+					return fmt.Errorf("failed to get hot reload status: %w", err)
+				}
+
+				fmt.Print("🔥 Hot Reload Session Status\n")
+				fmt.Printf("📋 Session ID: %s\n", status.SessionID)
+				fmt.Printf("📊 Status: %s\n", status.Status)
+				fmt.Printf("👀 Watching: %s\n", status.WatchingStatus)
+				fmt.Printf("🔨 Build: %s\n", status.BuildStatus)
+				fmt.Printf("🔄 Sync: %s\n", status.SyncStatus)
+				fmt.Printf("⚡ Hot Reload: %s\n", status.HotReloadStatus)
+
+				if status.Metrics != nil {
+					fmt.Print("\n📈 Metrics:\n")
+					fmt.Printf("   Uptime: %s\n", status.Metrics.Uptime)
+					fmt.Printf("   Total Changes: %d\n", status.Metrics.TotalChanges)
+					fmt.Printf("   Build Success Rate: %.1f%%\n", status.Metrics.BuildSuccessRate)
+					fmt.Printf("   Average Build Time: %s\n", status.Metrics.AverageBuildTime)
+					fmt.Printf("   Average Sync Time: %s\n", status.Metrics.AverageSyncTime)
+				}
+
+				if len(status.RecentActivity) > 0 {
+					fmt.Print("\n📋 Recent Activity:\n")
+					for _, activity := range status.RecentActivity {
+						timestamp, _ := time.Parse(time.RFC3339, activity.Timestamp)
+						fmt.Printf("   %s [%s] %s\n", 
+							timestamp.Format("15:04:05"), 
+							strings.ToUpper(activity.Level), 
+							activity.Message)
+					}
+				}
+			} else {
+				// Show summary of all sessions
+				sessions, err := app.HotReloadMgr.GetHotReloadSessions()
+				if err != nil {
+					return fmt.Errorf("failed to get hot reload sessions: %w", err)
+				}
+
+				if len(sessions) == 0 {
+					fmt.Print("📭 No active hot reload sessions\n")
+					fmt.Print("💡 Use 'claude-reactor hotreload start' to begin hot reloading\n")
+					return nil
+				}
+
+				fmt.Printf("🔥 Active Hot Reload Sessions (%d)\n\n", len(sessions))
+
+				for i, session := range sessions {
+					fmt.Printf("%d. Session: %s\n", i+1, session.ID)
+					fmt.Printf("   📁 Project: %s\n", session.ProjectPath)
+					if session.ProjectInfo != nil {
+						fmt.Printf("   🏷️  Type: %s (%s)\n", session.ProjectInfo.Type, session.ProjectInfo.Framework)
+					}
+					fmt.Printf("   📦 Container: %s\n", session.ContainerID[:12])
+					fmt.Printf("   📊 Status: %s\n", session.Status)
+					
+					startTime, _ := time.Parse(time.RFC3339, session.StartTime)
+					uptime := time.Since(startTime)
+					fmt.Printf("   ⏱️  Uptime: %s\n", formatDuration(uptime))
+					
+					if session.LastActivity != "" {
+						lastActivity, _ := time.Parse(time.RFC3339, session.LastActivity)
+						fmt.Printf("   🕐 Last Activity: %s ago\n", time.Since(lastActivity).Truncate(time.Second))
+					}
+					
+					if i < len(sessions)-1 {
+						fmt.Print("\n")
+					}
+				}
+
+				fmt.Print("\n💡 Use 'hotreload status <session-id>' for detailed information\n")
+			}
+
+			return nil
+		},
+	}
+
+	// List command (alias for status with no args)
+	var hotReloadListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List all hot reload sessions",
+		Long: `List all active hot reload sessions with their IDs, project paths,
+container information, and current status.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return hotReloadStatusCmd.RunE(cmd, []string{}) // Reuse the status command logic
+		},
+	}
+
+	// Config command
+	var hotReloadConfigCmd = &cobra.Command{
+		Use:   "config <session-id>",
+		Short: "Update hot reload configuration",
+		Long: `Update the configuration for an active hot reload session.
+
+This allows you to modify watching patterns, build settings, and sync options
+without stopping and restarting the session.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
+			
+			// Check if any config flags were provided
+			hasConfigChanges := len(hotReloadWatchPatternsFlag) > 0 || 
+				len(hotReloadIgnorePatternsFlag) > 0 || 
+				hotReloadDebounceFlag != -1 ||
+				hotReloadDisableBuildFlag ||
+				hotReloadDisableSyncFlag
+
+			if !hasConfigChanges {
+				return fmt.Errorf("no configuration changes specified. Use --watch, --ignore, --debounce, --no-build, or --no-sync flags")
+			}
+
+			// Create new options with the specified changes
+			options := &pkg.HotReloadOptions{
+				AutoDetect:          true,
+				EnableNotifications: true,
+			}
+
+			// Configure watch patterns
+			if len(hotReloadWatchPatternsFlag) > 0 || len(hotReloadIgnorePatternsFlag) > 0 || hotReloadDebounceFlag != -1 {
+				options.WatchConfig = &pkg.WatchConfig{
+					Recursive:       true,
+					EnableBuild:     !hotReloadDisableBuildFlag,
+					EnableHotReload: !hotReloadDisableSyncFlag,
+				}
+				
+				if len(hotReloadWatchPatternsFlag) > 0 {
+					options.WatchConfig.IncludePatterns = hotReloadWatchPatternsFlag
+				}
+				
+				if len(hotReloadIgnorePatternsFlag) > 0 {
+					options.WatchConfig.ExcludePatterns = hotReloadIgnorePatternsFlag
+				}
+				
+				if hotReloadDebounceFlag != -1 {
+					options.WatchConfig.DebounceDelay = hotReloadDebounceFlag
+				}
+			}
+
+			fmt.Printf("🔧 Updating hot reload configuration for session: %s\n", sessionID)
+
+			// Update configuration
+			err := app.HotReloadMgr.UpdateHotReloadConfig(sessionID, options)
+			if err != nil {
+				return fmt.Errorf("failed to update hot reload configuration: %w", err)
+			}
+
+			fmt.Printf("✅ Hot reload configuration updated for session: %s\n", sessionID)
+
+			// Show what was updated
+			if len(hotReloadWatchPatternsFlag) > 0 {
+				fmt.Printf("👀 Updated watch patterns: %v\n", hotReloadWatchPatternsFlag)
+			}
+			if len(hotReloadIgnorePatternsFlag) > 0 {
+				fmt.Printf("🚫 Updated ignore patterns: %v\n", hotReloadIgnorePatternsFlag)
+			}
+			if hotReloadDebounceFlag != -1 {
+				fmt.Printf("⏱️  Updated debounce delay: %dms\n", hotReloadDebounceFlag)
+			}
+			if hotReloadDisableBuildFlag {
+				fmt.Print("🔨 Disabled automatic building\n")
+			}
+			if hotReloadDisableSyncFlag {
+				fmt.Print("🔄 Disabled file synchronization\n")
+			}
+
+			return nil
+		},
+	}
+
+	// Add flags to start command
+	hotReloadStartCmd.Flags().StringVarP(&hotReloadContainerFlag, "container", "c", "", "Target container name or ID (auto-detected if not specified)")
+	hotReloadStartCmd.Flags().StringSliceVar(&hotReloadWatchPatternsFlag, "watch", nil, "File patterns to watch (e.g., '**/*.go', '*.js')")
+	hotReloadStartCmd.Flags().StringSliceVar(&hotReloadIgnorePatternsFlag, "ignore", nil, "File patterns to ignore (e.g., 'node_modules/', '*.tmp')")
+	hotReloadStartCmd.Flags().IntVar(&hotReloadDebounceFlag, "debounce", 500, "Debounce delay in milliseconds")
+	hotReloadStartCmd.Flags().BoolVar(&hotReloadDisableBuildFlag, "no-build", false, "Disable automatic building")
+	hotReloadStartCmd.Flags().BoolVar(&hotReloadDisableSyncFlag, "no-sync", false, "Disable file synchronization")
+	hotReloadStartCmd.Flags().BoolVarP(&hotReloadVerboseFlag, "verbose", "v", false, "Verbose output")
+
+	// Add flags to config command
+	hotReloadConfigCmd.Flags().StringSliceVar(&hotReloadWatchPatternsFlag, "watch", nil, "Update file patterns to watch")
+	hotReloadConfigCmd.Flags().StringSliceVar(&hotReloadIgnorePatternsFlag, "ignore", nil, "Update file patterns to ignore")
+	hotReloadConfigCmd.Flags().IntVar(&hotReloadDebounceFlag, "debounce", -1, "Update debounce delay in milliseconds")
+	hotReloadConfigCmd.Flags().BoolVar(&hotReloadDisableBuildFlag, "no-build", false, "Disable automatic building")
+	hotReloadConfigCmd.Flags().BoolVar(&hotReloadDisableSyncFlag, "no-sync", false, "Disable file synchronization")
+
+	// Add subcommands
+	hotReloadCmd.AddCommand(
+		hotReloadStartCmd,
+		hotReloadStopCmd,
+		hotReloadStatusCmd,
+		hotReloadListCmd,
+		hotReloadConfigCmd,
+	)
+
+	return hotReloadCmd
+}
+
+// Helper function for formatting duration
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	} else if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	} else if d < 24*time.Hour {
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	} else {
+		days := int(d.Hours()) / 24
+		hours := int(d.Hours()) % 24
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
 }
