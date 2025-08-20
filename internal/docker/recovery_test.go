@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -116,6 +117,14 @@ func (m *MockDockerManager) CleanImages(ctx context.Context, all bool) error {
 func (m *MockDockerManager) BuildImageWithRegistry(ctx context.Context, variant, platform string, devMode, registryOff, pullLatest bool) error {
 	args := m.Called(ctx, variant, platform, devMode, registryOff, pullLatest)
 	return args.Error(0)
+}
+
+func (m *MockDockerManager) GetClient() *client.Client {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*client.Client)
 }
 
 func TestNewRecoveryManager(t *testing.T) {

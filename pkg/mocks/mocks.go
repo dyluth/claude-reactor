@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/mock"
 
 	"claude-reactor/pkg"
@@ -142,6 +143,14 @@ func (m *MockDockerManager) CleanImages(ctx context.Context, all bool) error {
 func (m *MockDockerManager) BuildImageWithRegistry(ctx context.Context, variant, platform string, devMode, registryOff, pullLatest bool) error {
 	args := m.Called(ctx, variant, platform, devMode, registryOff, pullLatest)
 	return args.Error(0)
+}
+
+func (m *MockDockerManager) GetClient() *client.Client {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*client.Client)
 }
 
 // MockAuthManager is a mock implementation of AuthManager
@@ -287,4 +296,54 @@ func (m *MockLogger) WithField(key string, value interface{}) pkg.Logger {
 func (m *MockLogger) WithFields(fields map[string]interface{}) pkg.Logger {
 	args := m.Called(fields)
 	return args.Get(0).(pkg.Logger)
+}
+
+// MockDevContainerManager is a mock of DevContainerManager interface
+type MockDevContainerManager struct {
+	mock.Mock
+}
+
+// GenerateDevContainer mocks the GenerateDevContainer method
+func (m *MockDevContainerManager) GenerateDevContainer(projectPath string, config *pkg.Config) error {
+	args := m.Called(projectPath, config)
+	return args.Error(0)
+}
+
+// ValidateDevContainer mocks the ValidateDevContainer method
+func (m *MockDevContainerManager) ValidateDevContainer(projectPath string) error {
+	args := m.Called(projectPath)
+	return args.Error(0)
+}
+
+// GetExtensionsForProject mocks the GetExtensionsForProject method
+func (m *MockDevContainerManager) GetExtensionsForProject(projectType string, variant string) ([]string, error) {
+	args := m.Called(projectType, variant)
+	return args.Get(0).([]string), args.Error(1)
+}
+
+// CreateDevContainerConfig mocks the CreateDevContainerConfig method
+func (m *MockDevContainerManager) CreateDevContainerConfig(config *pkg.DevContainerConfig) ([]byte, error) {
+	args := m.Called(config)
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+// DetectProjectType mocks the DetectProjectType method
+func (m *MockDevContainerManager) DetectProjectType(projectPath string) (*pkg.ProjectDetectionResult, error) {
+	args := m.Called(projectPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*pkg.ProjectDetectionResult), args.Error(1)
+}
+
+// UpdateDevContainer mocks the UpdateDevContainer method
+func (m *MockDevContainerManager) UpdateDevContainer(projectPath string, config *pkg.Config) error {
+	args := m.Called(projectPath, config)
+	return args.Error(0)
+}
+
+// RemoveDevContainer mocks the RemoveDevContainer method
+func (m *MockDevContainerManager) RemoveDevContainer(projectPath string) error {
+	args := m.Called(projectPath)
+	return args.Error(0)
 }

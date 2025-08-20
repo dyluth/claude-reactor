@@ -5,8 +5,10 @@ import (
 	"claude-reactor/internal/architecture"
 	"claude-reactor/internal/auth"
 	"claude-reactor/internal/config"
+	"claude-reactor/internal/dependency"
 	"claude-reactor/internal/devcontainer"
 	"claude-reactor/internal/docker"
+	"claude-reactor/internal/hotreload"
 	"claude-reactor/internal/logging"
 	"claude-reactor/internal/mount"
 	"claude-reactor/internal/template"
@@ -41,6 +43,15 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 	// Initialize template manager
 	templateMgr := template.NewManager(logger, configMgr, devContainerMgr)
 	
+	// Initialize dependency manager
+	dependencyMgr := dependency.NewManager(logger)
+	
+	// Initialize hot reload components
+	fileWatcher := hotreload.NewFileWatcher(logger)
+	buildTrigger := hotreload.NewBuildTrigger(logger)
+	containerSync := hotreload.NewContainerSync(logger, dockerMgr.GetClient())
+	hotReloadMgr := hotreload.NewHotReloadManager(logger, dockerMgr.GetClient())
+	
 	return &pkg.AppContainer{
 		ArchDetector:    archDetector,
 		ConfigMgr:       configMgr,
@@ -49,6 +60,11 @@ func NewAppContainer() (*pkg.AppContainer, error) {
 		MountMgr:        mountMgr,
 		DevContainerMgr: devContainerMgr,
 		TemplateMgr:     templateMgr,
+		DependencyMgr:   dependencyMgr,
+		FileWatcher:     fileWatcher,
+		BuildTrigger:    buildTrigger,
+		ContainerSync:   containerSync,
+		HotReloadMgr:    hotReloadMgr,
 		Logger:          logger,
 	}, nil
 }

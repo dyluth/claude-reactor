@@ -2,6 +2,8 @@
 .claude-reactor
 .claude-reactor-*-env
 claude-reactor
+claude-reactor-*
+main
 
 # Claude Code local settings
 .claude/

@@ -60,21 +60,21 @@ func TestNamingManager_GetImageName(t *testing.T) {
 			name:     "go variant with arm64",
 			variant:  "go",
 			mockArch: "arm64",
-			expected: "claude-reactor-go-arm64",
+			expected: "v2-claude-reactor-go-arm64",
 			wantErr:  false,
 		},
 		{
 			name:     "base variant with amd64",
 			variant:  "base",
 			mockArch: "amd64",
-			expected: "claude-reactor-base-amd64",
+			expected: "v2-claude-reactor-base-amd64",
 			wantErr:  false,
 		},
 		{
 			name:     "full variant with arm64",
 			variant:  "full",
 			mockArch: "arm64",
-			expected: "claude-reactor-full-arm64",
+			expected: "v2-claude-reactor-full-arm64",
 			wantErr:  false,
 		},
 	}
@@ -119,12 +119,12 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "arm64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "claude-reactor-go-arm64")
+				assert.Contains(t, result, "v2-claude-reactor-go-arm64")
 				assert.Contains(t, result, "work")
 				// Should have project hash (8 characters)
 				parts := strings.Split(result, "-")
-				assert.Len(t, parts, 6) // claude-reactor-go-arm64-{hash}-work
-				assert.Len(t, parts[4], 8) // project hash should be 8 chars at index 4
+				assert.Len(t, parts, 7) // v2-claude-reactor-go-arm64-{hash}-work
+				assert.Len(t, parts[5], 8) // project hash should be 8 chars at index 5
 			},
 		},
 		{
@@ -134,7 +134,7 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "amd64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "claude-reactor-base-amd64")
+				assert.Contains(t, result, "v2-claude-reactor-base-amd64")
 				assert.Contains(t, result, "default")
 			},
 		},
@@ -145,7 +145,7 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "arm64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "claude-reactor-full-arm64")
+				assert.Contains(t, result, "v2-claude-reactor-full-arm64")
 				assert.Contains(t, result, "personal")
 			},
 		},
