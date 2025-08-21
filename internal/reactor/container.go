@@ -1,18 +1,18 @@
-package internal
+package reactor
 
 import (
 	"claude-reactor/pkg"
-	"claude-reactor/internal/architecture"
-	"claude-reactor/internal/auth"
-	"claude-reactor/internal/config"
-	"claude-reactor/internal/dependency"
-	"claude-reactor/internal/devcontainer"
-	"claude-reactor/internal/docker"
-	"claude-reactor/internal/docker/validation"
-	"claude-reactor/internal/hotreload"
-	"claude-reactor/internal/logging"
-	"claude-reactor/internal/mount"
-	"claude-reactor/internal/template"
+	"claude-reactor/internal/reactor/architecture"
+	"claude-reactor/internal/reactor/auth"
+	"claude-reactor/internal/reactor/config"
+	"claude-reactor/internal/reactor/dependency"
+	"claude-reactor/internal/reactor/devcontainer"
+	"claude-reactor/internal/reactor/docker"
+	"claude-reactor/internal/reactor/docker/validation"
+	"claude-reactor/internal/reactor/hotreload"
+	"claude-reactor/internal/reactor/logging"
+	"claude-reactor/internal/reactor/mount"
+	"claude-reactor/internal/reactor/template"
 )
 
 // NewAppContainer creates and initializes the application dependency container

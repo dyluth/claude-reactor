@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"claude-reactor/internal"
+	"claude-reactor/internal/reactor"
 	"claude-reactor/pkg"
 )
 
@@ -34,7 +34,7 @@ func Execute() error {
 	ctx := context.Background()
 	
 	// Initialize application container
-	app, err := internal.NewAppContainer()
+	app, err := reactor.NewAppContainer()
 	if err != nil {
 		return fmt.Errorf("failed to initialize application: %w", err)
 	}
@@ -561,7 +561,19 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if account != "" {
 		config.Account = account
 	}
-	config.DangerMode = danger
+	
+	// Handle danger mode with persistence logic
+	// Only override if the flag was explicitly set
+	if cmd.Flags().Changed("danger") {
+		config.DangerMode = danger
+		if danger {
+			app.Logger.Info("🔥 Danger mode enabled and will be persisted")
+		} else {
+			app.Logger.Info("🛡️  Danger mode disabled and will be persisted")
+		}
+	} else if config.DangerMode {
+		app.Logger.Info("🔥 Using persistent danger mode setting")
+	}
 	
 	// Handle authentication flags
 	if apikey != "" {

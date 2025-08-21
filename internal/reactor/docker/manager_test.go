@@ -262,6 +262,9 @@ func TestManager_BuildImage(t *testing.T) {
 	mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 
 	manager, err := NewManager(mockLogger)
+	if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
+		t.Skip("Docker daemon not available - skipping Docker manager tests")
+	}
 	require.NoError(t, err, "Should be able to create Docker manager")
 
 	ctx := context.Background()
@@ -376,6 +379,9 @@ func TestManager_GetContainerLogs(t *testing.T) {
 	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 
 	manager, err := NewManager(mockLogger)
+	if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
+		t.Skip("Docker daemon not available - skipping Docker manager tests")
+	}
 	require.NoError(t, err, "Should be able to create Docker manager")
 
 	ctx := context.Background()

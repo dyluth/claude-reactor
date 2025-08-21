@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	
+
 	"claude-reactor/pkg"
 )
 
@@ -60,21 +60,21 @@ func TestNamingManager_GetImageName(t *testing.T) {
 			name:     "go variant with arm64",
 			variant:  "go",
 			mockArch: "arm64",
-			expected: "v2-claude-reactor-go-arm64",
+			expected: "claude-reactor-go-arm64",
 			wantErr:  false,
 		},
 		{
 			name:     "base variant with amd64",
 			variant:  "base",
 			mockArch: "amd64",
-			expected: "v2-claude-reactor-base-amd64",
+			expected: "claude-reactor-base-amd64",
 			wantErr:  false,
 		},
 		{
 			name:     "full variant with arm64",
 			variant:  "full",
 			mockArch: "arm64",
-			expected: "v2-claude-reactor-full-arm64",
+			expected: "claude-reactor-full-arm64",
 			wantErr:  false,
 		},
 	}
@@ -83,21 +83,21 @@ func TestNamingManager_GetImageName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockLogger := &MockLogger{}
 			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Return()
-			
+
 			mockArchDetector := &MockArchDetector{}
 			mockArchDetector.On("GetHostArchitecture").Return(tt.mockArch, nil)
-			
+
 			nm := NewNamingManager(mockLogger, mockArchDetector)
-			
+
 			result, err := nm.GetImageName(tt.variant)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expected, result)
 			}
-			
+
 			mockArchDetector.AssertExpectations(t)
 		})
 	}
@@ -119,12 +119,12 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "arm64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "v2-claude-reactor-go-arm64")
+				assert.Contains(t, result, "claude-reactor-go-arm64")
 				assert.Contains(t, result, "work")
 				// Should have project hash (8 characters)
 				parts := strings.Split(result, "-")
-				assert.Len(t, parts, 7) // v2-claude-reactor-go-arm64-{hash}-work
-				assert.Len(t, parts[5], 8) // project hash should be 8 chars at index 5
+				assert.Len(t, parts, 6)    // claude-reactor-go-arm64-{hash}-work
+				assert.Len(t, parts[4], 8) // project hash should be 8 chars at index 4
 			},
 		},
 		{
@@ -134,7 +134,7 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "amd64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "v2-claude-reactor-base-amd64")
+				assert.Contains(t, result, "claude-reactor-base-amd64")
 				assert.Contains(t, result, "default")
 			},
 		},
@@ -145,7 +145,7 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 			mockArch: "arm64",
 			wantErr:  false,
 			validate: func(t *testing.T, result string) {
-				assert.Contains(t, result, "v2-claude-reactor-full-arm64")
+				assert.Contains(t, result, "claude-reactor-full-arm64")
 				assert.Contains(t, result, "personal")
 			},
 		},
@@ -155,14 +155,14 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockLogger := &MockLogger{}
 			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Return()
-			
+
 			mockArchDetector := &MockArchDetector{}
 			mockArchDetector.On("GetHostArchitecture").Return(tt.mockArch, nil)
-			
+
 			nm := NewNamingManager(mockLogger, mockArchDetector)
-			
+
 			result, err := nm.GetContainerName(tt.variant, tt.account)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -172,7 +172,7 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 					tt.validate(t, result)
 				}
 			}
-			
+
 			mockArchDetector.AssertExpectations(t)
 		})
 	}
@@ -181,13 +181,13 @@ func TestNamingManager_GetContainerName(t *testing.T) {
 func TestNamingManager_GetProjectHash(t *testing.T) {
 	mockLogger := &MockLogger{}
 	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Return()
-	
+
 	mockArchDetector := &MockArchDetector{}
-	
+
 	nm := NewNamingManager(mockLogger, mockArchDetector)
-	
+
 	hash, err := nm.getProjectHash()
-	
+
 	assert.NoError(t, err)
 	assert.Len(t, hash, 8, "Project hash should be 8 characters long")
 	assert.Regexp(t, "^[a-f0-9]{8}$", hash, "Project hash should be 8 lowercase hex characters")
@@ -196,12 +196,12 @@ func TestNamingManager_GetProjectHash(t *testing.T) {
 func BenchmarkNamingManager_GetContainerName(b *testing.B) {
 	mockLogger := &MockLogger{}
 	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Return()
-	
+
 	mockArchDetector := &MockArchDetector{}
 	mockArchDetector.On("GetHostArchitecture").Return("arm64", nil)
-	
+
 	nm := NewNamingManager(mockLogger, mockArchDetector)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = nm.GetContainerName("go", "test")

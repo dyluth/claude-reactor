@@ -666,23 +666,55 @@ func (m *manager) attachInteractive(ctx context.Context, containerID string, com
 				}
 			}()
 		}
+		
+		// Sync terminal size to prevent display issues
+		if err := m.resizeContainerTTY(ctx, execResp.ID); err != nil {
+			m.logger.Debugf("Failed to resize container TTY: %v", err)
+		}
 	}
 	
 	// Set up signal handling to properly restore terminal on interrupt
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	
-	// Handle I/O with proper error handling
+	// Handle I/O with proper error handling and buffering
 	inputDone := make(chan error, 1)
 	outputDone := make(chan error, 1)
 	
-	// Copy output from container to stdout
+	// Set up terminal resize handling to prevent display issues
+	if term.IsTerminal(fd) {
+		resizeChan := make(chan os.Signal, 1)
+		signal.Notify(resizeChan, syscall.SIGWINCH)
+		
+		go func() {
+			for range resizeChan {
+				if err := m.resizeContainerTTY(ctx, execResp.ID); err != nil {
+					m.logger.Debugf("Failed to resize container TTY: %v", err)
+				}
+			}
+		}()
+	}
+	
+	// Copy output from container to stdout with improved buffering
 	go func() {
-		_, err := io.Copy(os.Stdout, hijackedResp.Reader)
-		outputDone <- err
+		// Use a buffered copy to reduce flickering
+		buf := make([]byte, 1024)
+		for {
+			n, err := hijackedResp.Reader.Read(buf)
+			if n > 0 {
+				if _, writeErr := os.Stdout.Write(buf[:n]); writeErr != nil {
+					outputDone <- writeErr
+					return
+				}
+			}
+			if err != nil {
+				outputDone <- err
+				return
+			}
+		}
 	}()
 	
-	// Copy input from stdin to container
+	// Copy input from stdin to container with improved buffering
 	go func() {
 		_, err := io.Copy(hijackedResp.Conn, os.Stdin)
 		inputDone <- err
@@ -722,6 +754,32 @@ func (m *manager) attachInteractive(ctx context.Context, containerID string, com
 	}
 	
 	m.logger.Debug("Interactive session completed")
+	return nil
+}
+
+// resizeContainerTTY synchronizes the container's TTY size with the host terminal
+func (m *manager) resizeContainerTTY(ctx context.Context, execID string) error {
+	fd := os.Stdin.Fd()
+	if !term.IsTerminal(fd) {
+		return nil
+	}
+	
+	// Get current terminal size
+	ws, err := term.GetWinsize(fd)
+	if err != nil {
+		return fmt.Errorf("failed to get terminal size: %w", err)
+	}
+	
+	// Resize the container's TTY
+	resizeOptions := container.ResizeOptions{
+		Height: uint(ws.Height),
+		Width:  uint(ws.Width),
+	}
+	
+	if err := m.client.ContainerExecResize(ctx, execID, resizeOptions); err != nil {
+		return fmt.Errorf("failed to resize container TTY: %w", err)
+	}
+	
 	return nil
 }
 

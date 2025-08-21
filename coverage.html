@@ -2899,7 +2899,7 @@ If no project path is specified, the current directory is used.`,
                                 }</span>
                                 
                                 <span class="cov0" title="0">architecture, _ := app.ArchDetector.GetHostArchitecture()
-                                containerName := fmt.Sprintf("claude-reactor-v2-%s-%s-%s-%s", variant, architecture, projectHash, config.Account)
+                                containerName := fmt.Sprintf("claude-reactor-%s-%s-%s-%s", variant, architecture, projectHash, config.Account)
                                 
                                 // Check if container is running
                                 running, err := app.DockerMgr.IsContainerRunning(ctx, containerName)

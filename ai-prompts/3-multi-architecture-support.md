@@ -111,7 +111,7 @@ N/A - No UI changes required.
 ## Implementation plan
 
 ### phase 1 - Enhanced Registry Architecture Support
-- [ ] Implement architecture-specific container registry tags (e.g., v2-claude-reactor-go-arm64, v2-claude-reactor-go-amd64)
+- [ ] Implement architecture-specific container registry tags (e.g., claude-reactor-go-arm64, claude-reactor-go-amd64)
 - [ ] Add registry manifest inspection for architecture compatibility
 - [ ] Update Go CLI registry logic to prefer native architecture images
 - [ ] Enhance `--show-config` output with registry architecture information

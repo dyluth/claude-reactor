@@ -24,7 +24,7 @@ Currently, users select from 5 predefined container variants:
 4. **cloud**: Full + AWS/GCP/Azure CLIs (~1.5GB)
 5. **k8s**: Full + Enhanced Kubernetes tools (~1.4GB)
 
-All images are built from our multi-stage Dockerfile with the `v2-claude-reactor-{variant}-{arch}` naming convention.
+All images are built from our multi-stage Dockerfile with the `claude-reactor-{variant}-{arch}` naming convention.
 
 ## context & problem definition
 

@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"claude-reactor/internal/architecture"
-	"claude-reactor/internal/logging"
+	"claude-reactor/internal/reactor/architecture"
+	"claude-reactor/internal/reactor/logging"
 	"claude-reactor/pkg"
 )
 

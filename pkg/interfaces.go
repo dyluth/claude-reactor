@@ -1136,3 +1136,9 @@ type AppContainer struct {
 	ImageValidator  ImageValidator
 	Logger          Logger
 }
+
+// FabricOrchestrator interface for the reactor-fabric orchestrator
+type FabricOrchestrator interface {
+	// Start starts the orchestrator with the given configuration
+	Start(ctx context.Context, configPath, listenAddr string) error
+}
