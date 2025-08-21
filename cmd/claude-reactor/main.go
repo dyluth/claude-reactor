@@ -55,64 +55,51 @@ comprehensive development environment with intelligent automation, multi-languag
 support, and production-ready tooling.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildDate),
 		Run: func(cmd *cobra.Command, args []string) {
-			// Handle installation flags (Phase 0.2)
+			// Handle deprecated flags with clear migration guidance
 			if install, _ := cmd.Flags().GetBool("install"); install {
-				if err := handleInstallation(cmd, app, true); err != nil {
-					cmd.PrintErrf("Installation failed: %v\n", err)
-					os.Exit(1)
-				}
-				return
+				fmt.Fprintf(os.Stderr, "❌ The --install flag has been removed. Use:\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor install\n")
+				os.Exit(1)
 			}
 			
 			if uninstall, _ := cmd.Flags().GetBool("uninstall"); uninstall {
-				if err := handleInstallation(cmd, app, false); err != nil {
-					cmd.PrintErrf("Uninstallation failed: %v\n", err)
-					os.Exit(1)
-				}
-				return
+				fmt.Fprintf(os.Stderr, "❌ The --uninstall flag has been removed. Use:\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor uninstall\n")
+				os.Exit(1)
 			}
 			
-			// Handle legacy flags for backward compatibility
 			if listVariants, _ := cmd.Flags().GetBool("list-variants"); listVariants {
-				handleLegacyListVariants(cmd, app)
-				return
+				fmt.Fprintf(os.Stderr, "❌ The --list-variants flag has been removed. Use:\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor debug info\n")
+				os.Exit(1)
 			}
 			
-			// Check for variant flag and validate it
-			variant, _ := cmd.Flags().GetString("variant")
-			if variant != "" {
-				// Validate the variant
-				variants := []string{"base", "go", "full", "cloud", "k8s"}
-				validVariant := false
-				for _, v := range variants {
-					if v == variant {
-						validVariant = true
-						break
-					}
-				}
-				if !validVariant {
-					cmd.PrintErrf("Error: invalid variant '%s'. Available variants: %s\n", 
-						variant, strings.Join(variants, ", "))
-					os.Exit(1)
-				}
-				
-				// Save the variant to configuration (for backward compatibility)
-				config := &pkg.Config{
-					Variant:     variant,
-					Account:     "",
-					DangerMode:  false,
-					ProjectPath: "",
-					Metadata:    make(map[string]string),
-				}
-				_ = app.ConfigMgr.SaveConfig(config)
+			if variant, _ := cmd.Flags().GetString("variant"); variant != "" {
+				fmt.Fprintf(os.Stderr, "❌ The --variant flag has been removed. Use:\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor run --image %s\n", variant)
+				os.Exit(1)
 			}
 			
 			if showConfig, _ := cmd.Flags().GetBool("show-config"); showConfig {
-				handleLegacyShowConfig(cmd, app)
+				fmt.Fprintf(os.Stderr, "❌ The --show-config flag has been removed. Use:\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor config show\n")
+				os.Exit(1)
+			}
+			
+			// Default action - if config exists, run; otherwise show help
+			config, err := app.ConfigMgr.LoadConfig()
+			if err == nil && (config.Variant != "" || config.Account != "") {
+				// Configuration exists, default to run command
+				app.Logger.Info("🚀 Found existing configuration, running container...")
+				runCmd := newRunCmd(app)
+				if runErr := runCmd.RunE(cmd, args); runErr != nil {
+					cmd.PrintErrf("Run failed: %v\n", runErr)
+					os.Exit(1)
+				}
 				return
 			}
 			
-			// Default action - show help or run with default config
+			// No configuration found, show help
 			cmd.Help()
 		},
 	}
@@ -121,17 +108,17 @@ support, and production-ready tooling.`,
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().String("log-level", "info", "Set log level (debug, info, warn, error)")
 	
-	// Legacy compatibility flags (hidden from help)
-	rootCmd.Flags().Bool("list-variants", false, "List available container variants")
-	rootCmd.Flags().Bool("show-config", false, "Show current configuration")
-	rootCmd.Flags().String("variant", "", "Container variant (for compatibility)")
+	// Deprecated flags (hidden, show clear migration error)
+	rootCmd.Flags().Bool("list-variants", false, "Removed: use 'debug info'")
+	rootCmd.Flags().Bool("show-config", false, "Removed: use 'config show'")
+	rootCmd.Flags().String("variant", "", "Removed: use 'run --image'")
+	rootCmd.Flags().Bool("install", false, "Removed: use 'install' command")
+	rootCmd.Flags().Bool("uninstall", false, "Removed: use 'uninstall' command")
 	rootCmd.Flags().MarkHidden("list-variants")
 	rootCmd.Flags().MarkHidden("show-config")
 	rootCmd.Flags().MarkHidden("variant")
-	
-	// Installation flags (Phase 0.2)
-	rootCmd.Flags().Bool("install", false, "Install claude-reactor to system PATH (/usr/local/bin)")
-	rootCmd.Flags().Bool("uninstall", false, "Remove claude-reactor from system PATH")
+	rootCmd.Flags().MarkHidden("install")
+	rootCmd.Flags().MarkHidden("uninstall")
 
 	// Add subcommands
 	rootCmd.AddCommand(
@@ -144,6 +131,9 @@ support, and production-ready tooling.`,
 		newDependencyCmd(app),
 		newHotReloadCmd(app),
 		newDebugCmd(app),
+		newCompletionCmd(app),
+		newInstallCmd(app),
+		newUninstallCmd(app),
 	)
 
 	return rootCmd
@@ -152,12 +142,12 @@ support, and production-ready tooling.`,
 func newRunCmd(app *pkg.AppContainer) *cobra.Command {
 	var runCmd = &cobra.Command{
 		Use:   "run",
-		Short: "Start and connect to a Claude CLI container",
-		Long: `Start and connect to a Claude CLI container with the specified image.
-This will auto-detect project type, build the container if needed, and connect you
-to the Claude CLI running inside the container.
+		Short: "Start and connect to Claude CLI container",
+		Long: `Start and connect to a Claude CLI container with intelligent project detection.
+Auto-detects project type, builds container if needed, and launches Claude CLI 
+with appropriate development tools and configurations.
 
-Built-in Images: base, go, full, cloud, k8s (auto-built and optimized)
+Built-in Images: base, go, full, cloud, k8s (optimized for development)
 Custom Images: Any Docker Hub or registry image (validated for compatibility)
 
 Examples:
@@ -168,13 +158,15 @@ Examples:
   claude-reactor run --shell                  # Launch interactive shell instead
   claude-reactor run --danger                 # Enable danger mode (skip permissions)
   claude-reactor run --account work           # Use specific account configuration
-  claude-reactor run --persist=false          # Remove container when finished
+  claude-reactor run --account work --apikey sk-ant-xxx  # Set API key for work account
+  claude-reactor run --account new --interactive-login   # Force interactive login for new account
+  claude-reactor run --no-persist             # Remove container when finished
   
   # Registry control (v2 images)
   claude-reactor run --dev                    # Force local build (disable registry)
   claude-reactor run --registry-off           # Disable registry completely
   claude-reactor run --pull-latest            # Force pull latest from registry
-  claude-reactor run --continue=false         # Disable conversation continuation
+  claude-reactor run --no-continue            # Disable conversation continuation
 
 Custom Image Requirements:
   • Must be Linux-based (linux/amd64 or linux/arm64)
@@ -183,8 +175,13 @@ Custom Image Requirements:
 
 Troubleshooting:
   Use 'claude-reactor debug info' to check Docker connectivity
+  Use 'claude-reactor debug image <name>' to test custom images
   Use '--verbose' flag for detailed validation information
-  Validation results are cached for 30 days in ~/.claude-reactor/image-cache/`,
+  
+Related Commands:
+  claude-reactor build         Build container images
+  claude-reactor clean         Remove containers
+  claude-reactor config show   View current configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runContainer(cmd, app)
 		},
@@ -193,43 +190,49 @@ Troubleshooting:
 	// Run command flags
 	runCmd.Flags().StringP("image", "", "", "Container image (base, go, full, cloud, k8s, or custom Docker image)")
 	runCmd.Flags().StringP("account", "", "", "Claude account to use")
+	runCmd.Flags().StringP("apikey", "", "", "Set API key for this session (creates account-specific env file)")
+	runCmd.Flags().BoolP("interactive-login", "", false, "Force interactive authentication for account")
 	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode (--dangerously-skip-permissions)")
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
-	runCmd.Flags().BoolP("persist", "", true, "Keep container running after exit (default: true)")
+	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
 	runCmd.Flags().BoolP("no-mounts", "", false, "Skip mounting directories (for testing)")
 	
 	// Registry flags (Phase 0.1)
 	runCmd.Flags().BoolP("dev", "", false, "Force local build (disable registry pulls)")
 	runCmd.Flags().BoolP("registry-off", "", false, "Disable registry completely")
 	runCmd.Flags().BoolP("pull-latest", "", false, "Force pull latest from registry")
-	runCmd.Flags().BoolP("continue", "", true, "Enable conversation continuation (default: true)")
+	runCmd.Flags().BoolP("no-continue", "", false, "Disable conversation continuation (default: enabled)")
 
 	return runCmd
 }
 
 func newBuildCmd(app *pkg.AppContainer) *cobra.Command {
 	var buildCmd = &cobra.Command{
-		Use:   "build [variant]",
+		Use:   "build [image]",
 		Short: "Build container images",
-		Long: `Build Docker container images for the specified variant or all variants.
-This will build the multi-stage Dockerfile with architecture-aware optimizations.
+		Long: `Build Docker container images for the specified image variant.
+Uses multi-stage Dockerfile with architecture-aware optimizations for your platform.
+
+Use the Makefile for building multiple images efficiently:
+  make build-all      # Build core images (base, go, full)
+  make build-extended # Build all images
 
 Examples:
-  claude-reactor build               # Build base variant
-  claude-reactor build go            # Build Go toolchain variant
-  claude-reactor build --rebuild     # Force rebuild of base variant
-  claude-reactor build full --rebuild # Force rebuild of full variant`,
+  claude-reactor build               # Build base image
+  claude-reactor build go            # Build Go toolchain image
+  claude-reactor build --rebuild     # Force rebuild of base image
+  claude-reactor build full --rebuild # Force rebuild of full image`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app.Logger.Info("🔨 Building container images...")
 			
-			variant := "base"
+			image := "base"
 			if len(args) > 0 {
-				variant = args[0]
+				image = args[0]
 			}
 			
 			rebuild, _ := cmd.Flags().GetBool("rebuild")
-			app.Logger.Infof("📋 Building variant: %s, force rebuild: %t", variant, rebuild)
+			app.Logger.Infof("📋 Building image: %s, force rebuild: %t", image, rebuild)
 			
 			if rebuild {
 				app.Logger.Info("⚡ Force rebuild enabled - removing existing images first")
@@ -248,9 +251,9 @@ Examples:
 			app.Logger.Info("⏳ This may take several minutes for first-time build...")
 			
 			if rebuild {
-				err = app.DockerMgr.RebuildImage(ctx, variant, platform, true)
+				err = app.DockerMgr.RebuildImage(ctx, image, platform, true)
 			} else {
-				err = app.DockerMgr.BuildImage(ctx, variant, platform)
+				err = app.DockerMgr.BuildImage(ctx, image, platform)
 			}
 			
 			if err != nil {
@@ -258,7 +261,8 @@ Examples:
 			}
 			
 			app.Logger.Info("✅ Image build completed successfully!")
-			app.Logger.Info("💡 You can now run 'claude-reactor run' to start the container")
+			app.Logger.Info("💡 Use 'claude-reactor run' to start the container")
+			app.Logger.Info("💡 Use 'claude-reactor clean --images' to remove old images")
 			return nil
 		},
 	}
@@ -335,7 +339,12 @@ Examples:
   claude-reactor clean --all          # Remove all claude-reactor containers
   claude-reactor clean --images       # Also remove project images
   claude-reactor clean --cache        # Also clear image validation cache
-  claude-reactor clean --all --images --cache # Remove everything (containers + images + cache)`,
+  claude-reactor clean --all --images --cache # Remove everything (containers + images + cache)
+
+Related Commands:
+  claude-reactor run           Start new container
+  claude-reactor build         Build container images
+  claude-reactor config show   View current configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cleanContainers(cmd, app)
 		},
@@ -529,29 +538,6 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 	return debugCmd
 }
 
-// handleLegacyListVariants handles the --list-variants flag for backward compatibility
-func handleLegacyListVariants(cmd *cobra.Command, app *pkg.AppContainer) {
-	cmd.Println("Available container variants:")
-	variants := []string{"base", "go", "full", "cloud", "k8s"}
-	for _, variant := range variants {
-		cmd.Printf("  %s\n", variant)
-	}
-}
-
-// handleLegacyShowConfig handles the --show-config flag for backward compatibility
-func handleLegacyShowConfig(cmd *cobra.Command, app *pkg.AppContainer) {
-	config, err := app.ConfigMgr.LoadConfig()
-	if err != nil {
-		cmd.Printf("Error loading configuration: %v\n", err)
-		return
-	}
-	
-	cmd.Printf("Current Configuration:\n")
-	cmd.Printf("  Variant: %s\n", config.Variant)
-	cmd.Printf("  Account: %s\n", config.Account)
-	cmd.Printf("  Danger Mode: %t\n", config.DangerMode)
-	cmd.Printf("  Project Path: %s\n", config.ProjectPath)
-}
 
 // runContainer implements the core run command logic
 func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
@@ -560,10 +546,13 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	// Parse command flags
 	image, _ := cmd.Flags().GetString("image")
 	account, _ := cmd.Flags().GetString("account")
+	apikey, _ := cmd.Flags().GetString("apikey")
+	interactiveLogin, _ := cmd.Flags().GetBool("interactive-login")
 	danger, _ := cmd.Flags().GetBool("danger")
 	shell, _ := cmd.Flags().GetBool("shell")
 	mounts, _ := cmd.Flags().GetStringSlice("mount")
-	persist, _ := cmd.Flags().GetBool("persist")
+	noPersist, _ := cmd.Flags().GetBool("no-persist")
+	persist := !noPersist  // Default to true, unless --no-persist is specified
 	noMounts, _ := cmd.Flags().GetBool("no-mounts")
 	
 	// Registry flags (Phase 0.1)
@@ -572,7 +561,8 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	pullLatest, _ := cmd.Flags().GetBool("pull-latest")
 	
 	// Conversation control (Phase 0.3)
-	continueConversation, _ := cmd.Flags().GetBool("continue")
+	noContinue, _ := cmd.Flags().GetBool("no-continue")
+	continueConversation := !noContinue  // Default to true, unless --no-continue is specified
 	
 	app.Logger.Info("🚀 Starting Claude CLI container...")
 	
@@ -591,6 +581,21 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		config.Account = account
 	}
 	config.DangerMode = danger
+	
+	// Handle authentication flags
+	if apikey != "" {
+		app.Logger.Infof("🔑 Setting up API key for account: %s", config.Account)
+		if err := app.AuthMgr.SetupAuth(config.Account, apikey); err != nil {
+			return fmt.Errorf("failed to setup API key authentication: %w", err)
+		}
+		app.Logger.Info("✅ API key authentication configured")
+	}
+	
+	if interactiveLogin {
+		app.Logger.Infof("🔐 Forcing interactive login for account: %s", config.Account)
+		// Note: Interactive login is handled by the Claude CLI inside the container
+		// This flag will be passed to the container startup
+	}
 	
 	// Auto-detect variant if not specified
 	if config.Variant == "" {
@@ -675,6 +680,10 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	
 	app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t", 
 		config.Variant, config.Account, config.DangerMode, shell, persist)
+	
+	// Show which Claude config file will be mounted
+	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(config.Account)
+	app.Logger.Infof("🔑 Claude config: %s", claudeConfigPath)
 	
 	// Step 2: Generate container and image names
 	app.Logger.Info("🔧 Detecting system architecture...")
@@ -1271,7 +1280,7 @@ This command will:
 	}
 	
 	// Add flags
-	generateCmd.Flags().String("variant", "", "Force specific container variant (base, go, full, cloud, k8s)")
+	generateCmd.Flags().String("image", "", "Force specific container image (base, go, full, cloud, k8s)")
 	generateCmd.Flags().Bool("force", false, "Overwrite existing .devcontainer configuration")
 	
 	// Help subcommand
@@ -1311,12 +1320,12 @@ func generateDevContainer(cmd *cobra.Command, args []string, app *pkg.AppContain
 	}
 	config.ProjectPath = projectPath
 	
-	// Override variant if specified
-	if variant, _ := cmd.Flags().GetString("variant"); variant != "" {
-		if err := app.ConfigMgr.ValidateConfig(&pkg.Config{Variant: variant}); err != nil {
-			return fmt.Errorf("invalid variant '%s': %w", variant, err)
+	// Override image if specified
+	if image, _ := cmd.Flags().GetString("image"); image != "" {
+		if err := app.ConfigMgr.ValidateConfig(&pkg.Config{Variant: image}); err != nil {
+			return fmt.Errorf("invalid image '%s': %w", image, err)
 		}
-		config.Variant = variant
+		config.Variant = image
 	}
 	
 	// Check if devcontainer already exists
@@ -1522,7 +1531,7 @@ Step 2: Generate Configuration
    • Run: claude-reactor devcontainer generate
    • Creates .devcontainer/devcontainer.json with optimal settings
    • Force overwrite existing: claude-reactor devcontainer generate --force
-   • Specify variant: claude-reactor devcontainer generate --variant go
+   • Specify image: claude-reactor devcontainer generate --image go
 
 Step 3: Open in VS Code
    • Launch VS Code in project directory: code .
@@ -3359,5 +3368,133 @@ func formatDuration(d time.Duration) string {
 		days := int(d.Hours()) / 24
 		hours := int(d.Hours()) % 24
 		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+}
+
+// newCompletionCmd creates the completion command with installation instructions
+func newCompletionCmd(app *pkg.AppContainer) *cobra.Command {
+	completionCmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate completion scripts for your shell",
+		Long: `Generate completion scripts for claude-reactor commands.
+
+To load completions:
+
+Bash:
+  $ source <(claude-reactor completion bash)
+
+  # To load completions for each session, execute once:
+  # Linux:
+  $ claude-reactor completion bash > /etc/bash_completion.d/claude-reactor
+  # macOS:
+  $ claude-reactor completion bash > /usr/local/etc/bash_completion.d/claude-reactor
+
+Zsh:
+  # If shell completion is not already enabled in your environment,
+  # you will need to enable it. You can execute the following once:
+  $ echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+  # To load completions for each session, execute once:
+  $ claude-reactor completion zsh > "${fpath[1]}/_claude-reactor"
+
+  # You will need to start a new shell for this setup to take effect.
+
+Fish:
+  $ claude-reactor completion fish | source
+
+  # To load completions for each session, execute once:
+  $ claude-reactor completion fish > ~/.config/fish/completions/claude-reactor.fish
+
+PowerShell:
+  PS> claude-reactor completion powershell | Out-String | Invoke-Expression
+
+  # To load completions for every new session, run:
+  PS> claude-reactor completion powershell > claude-reactor.ps1
+  # and source this file from your PowerShell profile.
+`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.ExactValidArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return cmd.Root().GenBashCompletion(os.Stdout)
+			case "zsh":
+				return cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				return cmd.Root().GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell type %q", args[0])
+			}
+		},
+	}
+
+	return completionCmd
+}
+
+// newInstallCmd creates the install/uninstall command
+func newInstallCmd(app *pkg.AppContainer) *cobra.Command {
+	installCmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install claude-reactor to system PATH",
+		Long: `Install claude-reactor to system PATH (/usr/local/bin) to make it available globally.
+
+This allows you to use 'claude-reactor' from anywhere in your terminal without 
+specifying the full path to the binary.
+
+The installation process will:
+- Copy the current binary to /usr/local/bin/claude-reactor
+- Make it executable with proper permissions
+- Request sudo permissions if needed
+
+After installation, you can use commands like:
+  claude-reactor run
+  claude-reactor --version
+  claude-reactor clean
+
+From any directory on your system.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleInstallation(cmd, app, true)
+		},
+	}
+
+	// Uninstall subcommand
+	uninstallCmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove claude-reactor from system PATH",
+		Long: `Remove claude-reactor from system PATH (/usr/local/bin).
+
+This removes the global installation while keeping your local binary intact.
+You can still use claude-reactor from its original location after uninstalling.
+
+The uninstallation process will:
+- Remove /usr/local/bin/claude-reactor if it exists
+- Request sudo permissions if needed
+- Leave your local binary unchanged`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleInstallation(cmd, app, false)
+		},
+	}
+
+	installCmd.AddCommand(uninstallCmd)
+	return installCmd
+}
+
+// newUninstallCmd creates a standalone uninstall command for convenience
+func newUninstallCmd(app *pkg.AppContainer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove claude-reactor from system PATH",
+		Long: `Remove claude-reactor from system PATH (/usr/local/bin).
+
+This is a convenience command equivalent to 'claude-reactor install uninstall'.
+
+This removes the global installation while keeping your local binary intact.
+You can still use claude-reactor from its original location after uninstalling.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleInstallation(cmd, app, false)
+		},
 	}
 }

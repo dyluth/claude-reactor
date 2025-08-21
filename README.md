@@ -1,170 +1,293 @@
-# Claude CLI in Docker
+# Claude-Reactor
 
-A secure, isolated Docker environment for running the Claude CLI with Kubernetes access support.
+A professional, modular Docker containerization system for Claude CLI development workflows.
 
 ## Overview
 
-This project provides a containerized environment for the Claude CLI tool that:
-- Runs in complete isolation from your host machine
-- Supports both API key and interactive authentication methods
-- Includes kubectl for Kubernetes cluster management
-- Integrates seamlessly with VS Code Dev Containers
-- Uses the `claude` user (non-root) for enhanced security
-- Includes comprehensive development tools (ripgrep, jq, git, Node.js, Python)
+Claude-Reactor transforms the basic Claude CLI into a comprehensive development environment with intelligent automation, multi-language support, and production-ready tooling.
 
-## Components
-
-- **Dockerfile**: ARM64-compatible container with Debian, Node.js 22.17.0, Claude CLI, and kubectl
-- **Dev Container**: VS Code integration with automatic extension installation and directory mounting
+**Key Features:**
+- **Zero Configuration**: Auto-detects project type and sets up appropriate development environment
+- **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows  
+- **Professional Automation**: Comprehensive CLI with intelligent container management
+- **Account Isolation**: Complete separation between different Claude accounts
+- **Custom Images**: Support for custom Docker images with compatibility validation
+- **VS Code Integration**: Automatic dev container generation with project-specific extensions
 
 ## Quick Start
 
 ### Prerequisites
 
 - Docker Desktop installed and running
-- VS Code with Dev Containers extension (for Option B)
+- Go binary available at `/app/claude-reactor` (or build from source)
 
-### Using claude-reactor (Recommended)
-
-The `claude-reactor` script provides the easiest way to manage the containerized Claude CLI environment:
+### Basic Usage
 
 ```bash
-# First time setup - build image and create container
+# Start Claude CLI (auto-detects project type and creates appropriate container)
 ./claude-reactor
 
-# Available options
-./claude-reactor --help
-./claude-reactor --verbose              # Show detailed output
-./claude-reactor --rebuild              # Force rebuild (auto-cleans old container)
-./claude-reactor --clean                # Remove existing container
-./claude-reactor --interactive-login    # Force interactive UI login
-./claude-reactor --danger              # Launch directly into Claude CLI
+# Use specific container images
+./claude-reactor run --image go           # Go development tools
+./claude-reactor run --image full         # Go + Rust + Java + databases
+./claude-reactor run --image cloud        # Full + AWS/GCP/Azure CLIs
+./claude-reactor run --image k8s          # Full + enhanced Kubernetes tools
+
+# Use custom Docker image
+./claude-reactor run --image python:3.11  # Custom Python image (with validation)
 ```
 
-**Important:** On first run with `--danger` mode, you'll need to accept the Claude CLI trust dialog once. This acceptance persists via the mounted `~/.claude` directory.
+### Account Management
 
-### Option A: Manual Docker Usage
+Claude-Reactor provides complete account isolation for teams and personal use:
 
-1. **Build the image:**
-   ```bash
-   docker build -t claude-reactor .
-   ```
+```bash
+# Default account (uses ~/.claude.json)
+./claude-reactor                      
 
-2. **Run the container:**
-   
-   **For API Key Authentication:**
-   ```bash
-   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" --env-file ~/.env claude-reactor
-   ```
-   
-   **For Interactive UI Login:**
-   ```bash
-   docker run -d --name claude-agent -v "$(pwd)":/app -v "${HOME}/.kube:/root/.kube" claude-reactor
-   ```
+# Work account (isolated config and containers)
+./claude-reactor run --account work      
 
-3. **Connect to the container:**
-   ```bash
-   docker exec -it claude-agent /bin/bash
-   ```
+# Personal account 
+./claude-reactor run --account personal  
 
-4. **Use the tools:**
-   ```bash
-   claude --version
-   kubectl version --client
-   ```
+# Check current configuration
+./claude-reactor config show
+```
 
-### Option B: VS Code Dev Containers (Recommended)
-
-1. **Choose authentication method:**
-   - **API Key**: Ensure `~/.env` contains `ANTHROPIC_API_KEY=your_key_here`
-   - **Interactive**: Remove the `runArgs` block from `.devcontainer/devcontainer.json`
-
-2. **Open in VS Code:**
-   - Open this project folder in VS Code
-   - Click "Reopen in Container" when prompted
-   - Or use Command Palette: "Dev Containers: Reopen in Container"
-
-3. **Start working:**
-   - Open a new terminal in VS Code
-   - Claude CLI and kubectl are ready to use
-   - Kubernetes extension provides UI-based cluster management
+**Account-Specific Files:**
+- **Config**: `~/.claude-reactor/.work-claude.json`, `~/.claude-reactor/.personal-claude.json`
+- **Containers**: `claude-reactor-go-work`, `claude-reactor-go-personal`
+- **Settings**: Preferences saved per project in `.claude-reactor`
 
 ## Authentication Setup
 
-### API Key Method
-Create `~/.env` on your host machine:
-```
-ANTHROPIC_API_KEY=your_api_key_here
-```
+Claude-Reactor automatically uses your existing Claude CLI authentication. For new accounts, authentication happens once and is remembered:
 
-### Interactive Method
-Use `./claude-reactor --interactive-login` to force interactive authentication, or remove the `runArgs` section from `.devcontainer/devcontainer.json`. The file should look like:
-```json
-{
-	"name": "Claude Interactive Environment",
-	"dockerFile": "../Dockerfile",
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"dbaeumer.vscode-eslint",
-				"ms-kubernetes-tools.vscode-kubernetes-tools"
-			]
-		}
-	},
-	"mounts": [
-		"source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
-		"source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,consistency=cached"
-	]
-}
-```
+### First-time Setup for New Accounts
 
-## First-Time Setup
-
-### Claude CLI Trust Dialog
-When using Claude CLI for the first time in the container (especially with `--danger` mode), you'll need to accept the trust dialog once:
-
-1. Run `./claude-reactor --danger`
-2. Accept the trust dialog when prompted
-3. This acceptance is saved to your mounted `~/.claude` directory and persists across container restarts
-
-### Git Configuration
-Your host's `~/.gitconfig` is automatically mounted, so git operations will use your existing configuration.
-
-## Kubernetes Access
-
-The container automatically mounts your local `~/.kube` directory, providing access to your Kubernetes clusters. Test with:
 ```bash
-kubectl get pods
+# For work account with API key
+./claude-reactor run --account work --apikey sk-ant-your-key-here
+
+# For interactive authentication
+./claude-reactor run --account work --interactive-login
+
+# After setup, just use the account name
+./claude-reactor run --account work
 ```
 
-## Verified Versions
+**How it Works:**
+- **Default account**: Uses your existing `~/.claude.json` file
+- **Named accounts**: Creates isolated configs in `~/.claude-reactor/.{account}-claude.json`
+- **One-time setup**: Authentication is configured once per account and remembered
+- **Container isolation**: Each account gets separate containers with independent authentication
 
-- **Node.js**: 22.17.0 (LTS)
-- **Claude CLI**: 1.0.67
-- **kubectl**: 1.33.3
-- **Base Image**: debian:bullseye-slim (ARM64 compatible)
+## Advanced Usage
 
-## Cleanup
+### Container Variants
 
-Using claude-reactor:
+Built-in variants optimized for different development needs:
+
+| Variant | Size | Tools | Use Case |
+|---------|------|-------|----------|
+| `base` | ~500MB | Node.js, Python, Git | Lightweight development |
+| `go` | ~800MB | Base + Go toolchain | Go development |
+| `full` | ~1.2GB | Go + Rust, Java, Databases | Multi-language projects |
+| `cloud` | ~1.5GB | Full + AWS/GCP/Azure CLIs | Cloud development |
+| `k8s` | ~1.4GB | Full + Enhanced Kubernetes tools | Kubernetes workflows |
+
+### VS Code Integration
+
+Automatic dev container generation with project-specific setup:
+
 ```bash
-./claude-reactor --clean    # Remove container only
-./claude-reactor --rebuild  # Rebuild image (auto-cleans container)
+# Generate .devcontainer for current project
+./claude-reactor devcontainer generate
+
+# Force specific image
+./claude-reactor devcontainer generate --image go
+
+# Auto-detects project type and includes relevant extensions:
+# - Go projects: Go extension, Delve debugger
+# - Node.js: ESLint, Prettier, Node.js debugger
+# - Python: Python extension, Pylance, debugger
+# - Multi-language: Includes all relevant tooling
 ```
 
-Manual cleanup:
+### Custom Docker Images
+
+Use any Linux-based Docker image with validation:
+
 ```bash
-# Stop and remove container
-docker stop claude-agent && docker rm claude-agent
+# Python scientific computing
+./claude-reactor run --image jupyter/scipy-notebook
 
-# Remove image
-docker rmi claude-reactor
+# Custom enterprise image  
+./claude-reactor run --image myregistry.com/dev-env:latest
+
+# Image validation provides compatibility feedback:
+# ✅ Linux platform detected
+# ✅ Claude CLI installation verified
+# ⚠️ Missing recommended tools: git, curl
+# 📦 Package analysis: 8/10 recommended tools available
 ```
 
-## Features
+## Configuration Management
 
-- **Security**: Runs as non-root `claude` user with sudo access
-- **Development Tools**: Includes ripgrep, jq, fzf, vim, nano, git, Python, Node.js tools
-- **Git Integration**: Git-aware prompt showing branch and dirty status
-- **Configuration Persistence**: Claude CLI, git, and kubectl configs persist via mounted directories
-- **Easy Management**: Single script handles all container lifecycle operations
+### Project-Specific Settings
+Each project directory can have custom preferences saved in `.claude-reactor`:
+
+```bash
+# Example .claude-reactor file (auto-created)
+image=go
+danger=true
+account=work
+```
+
+### Global Account Configuration
+Account configurations stored in `~/.claude-reactor/`:
+
+```
+~/.claude-reactor/
+├── .default-claude.json      # Default account OAuth config
+├── .work-claude.json         # Work account OAuth config  
+├── .personal-claude.json     # Personal account OAuth config
+├── .default-claude/          # Default account Claude CLI state
+├── .work-claude/             # Work account Claude CLI state
+└── image-cache/              # Docker image validation cache
+```
+
+## Common Workflows
+
+### Team Development Setup
+
+```bash
+# Set up work environment
+cd /path/to/work/project
+./claude-reactor run --account work --image go
+
+# Set up personal environment  
+cd /path/to/personal/project
+./claude-reactor run --account personal --image base
+
+# Each has isolated containers, configs, and authentication
+```
+
+### Multi-Language Project
+
+```bash
+cd /path/to/fullstack/project
+
+# Use full image for comprehensive tooling
+./claude-reactor run --image full
+
+# Container includes: Go, Rust, Java, Node.js, Python, databases
+# Auto-detects project type and provides relevant tooling
+```
+
+### Custom Enterprise Environment
+
+```bash
+# Use company-specific development image
+./claude-reactor run --image enterprise-registry.com/dev-env:v2.1
+
+# System validates compatibility and shows tool analysis:
+# ✅ Compatible with claude-reactor
+# 📦 Available tools: git, curl, jq, docker
+# ⚠️ Missing: ripgrep, fzf (non-critical)
+```
+
+## Project Templates and Scaffolding
+
+Generate new projects with intelligent defaults:
+
+```bash
+# Interactive project creation
+./claude-reactor template init
+
+# Direct project creation from templates
+./claude-reactor template new go-api my-api
+./claude-reactor template new rust-cli my-cli
+./claude-reactor template new node-webapp my-webapp
+```
+
+## Command Reference
+
+### Core Commands
+
+```bash
+# Container management
+./claude-reactor                         # Start Claude CLI (smart defaults)
+./claude-reactor run --shell             # Launch bash shell instead
+./claude-reactor run --danger            # Skip Claude CLI permissions dialog
+./claude-reactor config show             # Display current configuration
+
+# Image and account management  
+./claude-reactor run --image go          # Use Go development image
+./claude-reactor run --account work      # Switch to work account
+./claude-reactor clean                   # Remove current project container
+./claude-reactor clean --all             # Remove all containers
+
+# Development tools
+./claude-reactor devcontainer generate   # Create VS Code dev container
+./claude-reactor template init           # Interactive project scaffolding
+./claude-reactor debug cache info        # Show image validation cache
+```
+
+### Build from Source
+
+```bash
+# Clone and build
+git clone <repository>
+cd claude-reactor
+make build
+
+# The binary will be available as ./claude-reactor
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Authentication Problems:**
+```bash
+# Force interactive login for new account
+./claude-reactor run --account newaccount --interactive-login
+
+# Check authentication status
+./claude-reactor config show
+```
+
+**Container Issues:**
+```bash
+# Clean and rebuild
+./claude-reactor clean && ./claude-reactor build go
+
+# Check Docker daemon
+docker info
+```
+
+**Custom Image Problems:**
+```bash
+# Check image validation details
+./claude-reactor debug image your-image:tag
+
+# Clear validation cache
+./claude-reactor debug cache clear
+```
+
+## Architecture
+
+Claude-Reactor uses a modular Go architecture with:
+
+- **Account Isolation**: Complete separation of Claude configurations and containers
+- **Image Validation**: Automatic compatibility checking for custom Docker images  
+- **Project Detection**: Smart detection of project types for optimal tooling
+- **Mount Management**: Secure mounting of configs, projects, and additional directories
+- **Template System**: Language-specific project scaffolding with best practices
+
+**File Structure:**
+- Configuration: `.claude-reactor` (per project), `~/.claude-reactor/` (global)
+- Containers: Named with account and project isolation
+- Validation Cache: `~/.claude-reactor/image-cache/` (digest-based, 30-day expiry)
