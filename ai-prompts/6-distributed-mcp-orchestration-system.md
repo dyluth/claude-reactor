@@ -106,9 +106,14 @@ type OrchestratorConfig struct {
 
 // MCPService defines a single, orchestrable MCP agent.  
 type MCPService struct {  
-	Image   string                 \`yaml:"image"\`  
-	Config  map\[string\]interface{} \`yaml:"config,omitempty"\`  
-	Timeout string                 \`yaml:"timeout,omitempty"\` // e.g., "1m", "5m30s"  
+	Image            string                 \`yaml:"image"\`  
+	Config           map\[string\]interface{} \`yaml:"config,omitempty"\`  
+	Timeout          string                 \`yaml:"timeout,omitempty"\` // e.g., "1m", "5m30s"  
+	ServiceType      string                 \`yaml:"service_type,omitempty"\` // "llm_agent" or "tool_service"  
+	ContainerStrategy string                \`yaml:"container_strategy,omitempty"\` // "fresh_per_call", "reuse_per_session", "smart_refresh"  
+	MaxCallsPerContainer int                \`yaml:"max_calls_per_container,omitempty"\` // For smart_refresh strategy  
+	MaxContainerAge     string             \`yaml:"max_container_age,omitempty"\` // For smart_refresh strategy  
+	MemoryThreshold     string             \`yaml:"memory_threshold,omitempty"\` // For smart_refresh strategy  
 }
 
 // ClientContext holds the state for a single connected client session.  
@@ -211,14 +216,39 @@ N/A.
 * \[ \] Modify the container spawning logic to use the session's registered volume mounts.  
 * \[ \] Test the end-to-end flow with a single client.
 
-### **phase 3 \- Documentation & Operations**
+### **phase 3 \- Advanced Container Strategy & Operations**
 
-* **Goal**: Harden the project with robust documentation, operational tooling, and multi-client support.  
+* **Goal**: Implement intelligent container lifecycle management, comprehensive documentation, and production-ready operational tooling.  
+
+#### **3.1 Configurable Container Strategy System**
+* \[ \] **Service Type Detection**: Implement automatic detection of LLM-based services vs traditional tool services
+  * Auto-detect `claude-reactor`, `claude-*`, and known LLM image patterns
+  * Classify services as `llm_agent` or `tool_service` types
+  * Allow manual override via `service_type` configuration field
+* \[ \] **Container Strategy Framework**: Add `container_strategy` configuration option with three modes:
+  * `fresh_per_call`: Creates new container for every tool call (default for LLM services)
+  * `reuse_per_session`: Reuses container across tool calls within session (default for tool services)  
+  * `smart_refresh`: Intelligent container refresh based on configurable thresholds
+* \[ \] **Smart Refresh Implementation**: 
+  * Track container age, memory usage, and call count
+  * Configurable thresholds: `max_calls_per_container`, `max_container_age`, `memory_threshold`
+  * Automatic container restart when thresholds exceeded
+* \[ \] **Enhanced Configuration Schema**: Extend MCPService struct with container strategy options
+* \[ \] **Container Lifecycle Metrics**: Track and log container performance and refresh decisions
+
+#### **3.2 Documentation & Operations Infrastructure**  
 * \[ \] Create docs/ structure with README.md, DEVELOPMENT.md, and USAGE.md guides.  
-* \[ \] The USAGE.md guide must include the claude-mcp-suite.yaml schema and the initial service suite template.  
+* \[ \] The USAGE.md guide must include the enhanced claude-mcp-suite.yaml schema with container strategy examples.  
+* \[ \] Document container strategy decision matrix and performance implications
 * \[ \] Implement the make validate-config and make test-onboarding targets.  
-* \[ \] Update E2E tests to validate concurrent client scenarios.  
-* \[ \] Document troubleshooting procedures.
+* \[ \] Update E2E tests to validate concurrent client scenarios and container strategy behaviors.  
+* \[ \] Document troubleshooting procedures including container strategy debugging.
+
+#### **3.3 Production Readiness**
+* \[ \] **Real Container Communication**: Replace Phase 2 simulation with actual HTTP/TCP MCP communication
+* \[ \] **Multi-Client Testing**: Comprehensive concurrent client scenarios with different container strategies
+* \[ \] **Performance Optimization**: Container startup optimization and resource management
+* \[ \] **Monitoring & Observability**: Container lifecycle logging and metrics collection
 
 ## **Testing Strategy**
 
@@ -279,31 +309,50 @@ orchestrator:
 
 \# Available MCP service definitions  
 mcp\_services:  
-  \# Provides basic filesystem operations.  
+  \# Provides basic filesystem operations (traditional tool service).  
   filesystem:  
     image: "ghcr.io/modelcontextprotocol/server-filesystem:latest"  
-    timeout: "1m" \# Default idle timeout
+    timeout: "1m"  
+    service_type: "tool_service" \# Auto-detected, but can be explicit  
+    container_strategy: "reuse_per_session" \# Default for tool services
 
-  \# Provides tools for interacting with a Git repository.  
+  \# Provides tools for interacting with a Git repository (traditional tool service).  
   git:  
     image: "ghcr.io/modelcontextprotocol/server-git:latest"  
-    timeout: "5m"
+    timeout: "5m"  
+    container_strategy: "smart_refresh"  
+    max_calls_per_container: 20 \# Refresh after 20 calls  
+    max_container_age: "30m" \# Or after 30 minutes
 
-  \# Provides tools for running shell commands.  
+  \# Provides tools for running shell commands (traditional tool service).  
   \# Note: This is powerful and potentially dangerous.  
   shell:  
     image: "ghcr.io/modelcontextprotocol/server-shell:latest"  
-    timeout: "1m"
+    timeout: "1m"  
+    container_strategy: "fresh_per_call" \# Security: fresh shell each time
 
-  \# An example of a claude-reactor based service.  
-  \# This agent would be specialised for Python development.  
+  \# Claude-based Python expert (LLM agent service).  
   python\_expert:  
     image: "ghcr.io/dyluth/claude-reactor/python:latest"  
     timeout: "10m"  
+    service_type: "llm_agent" \# Auto-detected from 'claude-reactor' in image  
+    container_strategy: "fresh_per_call" \# Default for LLM services (fresh context)  
     config:  
       account: "work\_account"  
       danger\_mode: false  
       specialty: "Expert in Python, Django, and data analysis."
+
+  \# Another LLM agent with smart refresh strategy  
+  frontend\_expert:  
+    image: "claude-reactor:frontend"  
+    timeout: "15m"  
+    container_strategy: "smart_refresh"  
+    max_calls_per_container: 5 \# Refresh after 5 calls to preserve context  
+    max_container_age: "20m" \# Or after 20 minutes  
+    memory_threshold: "400MB" \# Or when memory usage exceeds threshold  
+    config:  
+      account: "personal"  
+      specialty: "React, TypeScript, and modern frontend architecture."
 
 ## **Rollout & Deployment**
 
