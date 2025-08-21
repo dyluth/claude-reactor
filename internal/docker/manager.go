@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -199,7 +200,49 @@ func (m *manager) StartContainer(ctx context.Context, config *pkg.ContainerConfi
 	}
 	
 	m.logger.Infof("Successfully started container: %s (ID: %s)", config.Name, resp.ID[:12])
+	
+	// Run claude upgrade if requested and container has claude CLI
+	if config.RunClaudeUpgrade {
+		m.logger.Info("Running claude upgrade in container...")
+		if err := m.runClaudeUpgrade(ctx, resp.ID); err != nil {
+			m.logger.Warnf("Claude upgrade failed (non-fatal): %v", err)
+			// Don't fail container startup for upgrade issues
+		}
+	}
+	
 	return resp.ID, nil
+}
+
+// runClaudeUpgrade executes claude upgrade in the container after startup
+func (m *manager) runClaudeUpgrade(ctx context.Context, containerID string) error {
+	// Wait a moment for container to be fully ready
+	time.Sleep(2 * time.Second)
+	
+	// Create exec configuration using container package types
+	execConfig := container.ExecOptions{
+		Cmd:    []string{"claude", "upgrade"},
+		Detach: true, // Run in background
+	}
+	
+	// Create exec instance
+	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		// Claude CLI may not be available in this container - not a fatal error
+		m.logger.Debugf("Could not create claude upgrade exec (claude CLI may not be available): %v", err)
+		return nil
+	}
+	
+	// Start exec (fire and forget - don't wait for completion) 
+	err = m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{
+		Detach: true,
+	})
+	if err != nil {
+		m.logger.Debugf("Could not start claude upgrade (non-fatal): %v", err)
+		return nil
+	}
+	
+	m.logger.Info("✅ Claude upgrade initiated in container")
+	return nil
 }
 
 // StopContainer stops a running container
@@ -551,23 +594,152 @@ func (m *manager) CleanAllContainers(ctx context.Context) error {
 
 // AttachToContainer executes commands in a running container using Docker SDK exec
 func (m *manager) AttachToContainer(ctx context.Context, containerName string, command []string, interactive bool) error {
-	// For now, use a simpler approach with a suggestion for fallback
-	// Interactive exec is complex to implement properly with proper I/O handling
+	m.logger.Debugf("Attaching to container %s with command: %v (interactive: %t)", containerName, command, interactive)
 	
-	if interactive {
-		// For interactive mode, suggest using docker exec directly
-		commandStr := strings.Join(command, " ")
-		return fmt.Errorf("interactive container attachment not yet fully implemented. Please use fallback: docker exec -it %s %s", containerName, commandStr)
+	// Get container ID from name
+	containerID, err := m.getContainerIDByName(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("failed to find container %s: %w", containerName, err)
 	}
 	
-	// For non-interactive mode, we can implement basic exec
-	m.logger.Infof("Executing non-interactive command in container %s: %v", containerName, command)
+	if interactive {
+		return m.attachInteractive(ctx, containerID, command)
+	} else {
+		return m.attachNonInteractive(ctx, containerID, command)
+	}
+}
+
+// attachInteractive handles interactive container attachment with TTY
+func (m *manager) attachInteractive(ctx context.Context, containerID string, command []string) error {
+	m.logger.Debugf("Creating interactive exec for container %s", containerID[:12])
 	
-	// This is a simplified implementation - for production use we'd need proper exec handling
-	m.logger.Info("🔗 Container command execution not yet fully implemented")
-	m.logger.Infof("💡 Suggestion: Use 'docker exec -it %s %s' to attach manually", containerName, strings.Join(command, " "))
+	// Create exec configuration
+	execConfig := container.ExecOptions{
+		Cmd:          command,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+	}
 	
-	return nil // For now, don't error out to allow testing other functionality
+	// Create exec instance
+	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec instance: %w", err)
+	}
+	
+	// Start exec with hijacked connection for interactive I/O
+	execStartCheck := container.ExecStartOptions{
+		Tty: true,
+	}
+	
+	hijackedResp, err := m.client.ContainerExecAttach(ctx, execResp.ID, execStartCheck)
+	if err != nil {
+		return fmt.Errorf("failed to attach to exec instance: %w", err)
+	}
+	defer hijackedResp.Close()
+	
+	// Start the exec instance
+	if err := m.client.ContainerExecStart(ctx, execResp.ID, execStartCheck); err != nil {
+		return fmt.Errorf("failed to start exec instance: %w", err)
+	}
+	
+	m.logger.Info("✅ Successfully attached to container - press Ctrl+C to disconnect")
+	
+	// Handle I/O in separate goroutines
+	go func() {
+		io.Copy(os.Stdout, hijackedResp.Reader)
+	}()
+	
+	go func() {
+		io.Copy(hijackedResp.Conn, os.Stdin)
+	}()
+	
+	// Wait for exec to complete
+	for {
+		inspectResp, err := m.client.ContainerExecInspect(ctx, execResp.ID)
+		if err != nil {
+			return fmt.Errorf("failed to inspect exec instance: %w", err)
+		}
+		
+		if !inspectResp.Running {
+			m.logger.Debug("Exec instance completed")
+			break
+		}
+		
+		time.Sleep(500 * time.Millisecond)
+	}
+	
+	return nil
+}
+
+// attachNonInteractive handles non-interactive command execution
+func (m *manager) attachNonInteractive(ctx context.Context, containerID string, command []string) error {
+	m.logger.Debugf("Creating non-interactive exec for container %s", containerID[:12])
+	
+	// Create exec configuration
+	execConfig := container.ExecOptions{
+		Cmd:          command,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          false,
+	}
+	
+	// Create exec instance
+	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec instance: %w", err)
+	}
+	
+	// Start exec
+	execStartCheck := container.ExecStartOptions{
+		Tty: false,
+	}
+	
+	hijackedResp, err := m.client.ContainerExecAttach(ctx, execResp.ID, execStartCheck)
+	if err != nil {
+		return fmt.Errorf("failed to attach to exec instance: %w", err)
+	}
+	defer hijackedResp.Close()
+	
+	// Start the exec instance
+	if err := m.client.ContainerExecStart(ctx, execResp.ID, execStartCheck); err != nil {
+		return fmt.Errorf("failed to start exec instance: %w", err)
+	}
+	
+	// Copy output to stdout/stderr
+	io.Copy(os.Stdout, hijackedResp.Reader)
+	
+	// Wait for completion and get exit code
+	inspectResp, err := m.client.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return fmt.Errorf("failed to inspect exec instance: %w", err)
+	}
+	
+	if inspectResp.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d", inspectResp.ExitCode)
+	}
+	
+	return nil
+}
+
+// getContainerIDByName retrieves container ID by name
+func (m *manager) getContainerIDByName(ctx context.Context, containerName string) (string, error) {
+	containers, err := m.client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return "", fmt.Errorf("failed to list containers: %w", err)
+	}
+	
+	for _, cont := range containers {
+		for _, name := range cont.Names {
+			// Container names include leading slash
+			if strings.TrimPrefix(name, "/") == containerName {
+				return cont.ID, nil
+			}
+		}
+	}
+	
+	return "", fmt.Errorf("container %s not found", containerName)
 }
 
 // HealthCheck verifies container is healthy and responsive
@@ -802,7 +974,7 @@ func (m *manager) getRegistryImageName(variant string) string {
 		tag = "latest"
 	}
 	
-	return fmt.Sprintf("%s-v2-%s:%s", registry, variant, tag)
+	return fmt.Sprintf("%s/%s:%s", registry, variant, tag)
 }
 
 // tryPullFromRegistry attempts to pull an image from registry

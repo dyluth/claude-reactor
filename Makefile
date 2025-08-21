@@ -62,8 +62,13 @@ help: ## Display this help message
 	@echo "    make test-unit        # Quick unit tests only"
 	@echo ""
 	@echo "  $(BLUE)Building:$(NC)"
-	@echo "    make build-all        # Build core variants"
-	@echo "    make build-extended   # Build all variants"
+	@echo "    make build            # Build binaries for all platforms"
+	@echo "    make build-local      # Build binary for current platform only"
+	@echo "    make build-all        # Build Docker container variants"
+	@echo ""
+	@echo "  $(BLUE)Installation:$(NC)"
+	@echo "    make install          # Install to system PATH"
+	@echo "    make uninstall        # Remove from system PATH"
 	@echo ""
 	@echo "  $(BLUE)Maintenance:$(NC)"
 	@echo "    make clean-all        # Complete cleanup"
@@ -192,7 +197,7 @@ test-integration-quick: ## Run integration tests without Docker builds
 	@./tests/test-runner.sh --integration --quick && echo "$(GREEN)✓ Quick integration tests completed$(NC)"
 
 .PHONY: test
-test: test-unit test-integration-quick ## Run complete test suite (unit + quick integration)
+test: build test-unit test-integration-quick ## Run complete test suite (unit + quick integration)
 	@echo "$(GREEN)✓ Complete test suite passed$(NC)"
 
 .PHONY: test-full
@@ -217,15 +222,40 @@ demo-quick: ## Run quick demo without Docker builds
 ##@ Go Development
 
 .PHONY: build
-build: ## Build main claude-reactor binary
-	@echo "$(BLUE)Building claude-reactor binary...$(NC)"
+build: ## Build claude-reactor binaries for all major architectures
+	@echo "$(BLUE)Building claude-reactor binaries for all platforms...$(NC)"
+	@mkdir -p dist
+	@GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-amd64 ./cmd/claude-reactor
+	@GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-arm64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-amd64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-arm64 ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Multi-platform binaries built in dist/$(NC)"
+	@echo "$(BLUE)Use ./INSTALL to install the appropriate binary for your platform$(NC)"
+
+.PHONY: build-local
+build-local: ## Build claude-reactor binary for current platform only (faster)
+	@echo "$(BLUE)Building claude-reactor for current platform...$(NC)"
 	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
 		-o claude-reactor ./cmd/claude-reactor
-	@echo "$(GREEN)✓ Binary built: claude-reactor$(NC)"
+	@echo "$(GREEN)✓ Local binary built: claude-reactor$(NC)"
 
 .PHONY: go-build
 go-build: build ## Build Go binary (alias for build)
-	@echo "$(GREEN)✓ Go binary built: claude-reactor$(NC)"
+	@echo "$(GREEN)✓ Go binaries built in dist/$(NC)"
+
+.PHONY: install
+install: ## Install claude-reactor to system PATH using INSTALL script
+	@echo "$(BLUE)Installing claude-reactor to system PATH...$(NC)"
+	@./INSTALL
+
+.PHONY: uninstall 
+uninstall: ## Remove claude-reactor from system PATH using INSTALL script
+	@echo "$(BLUE)Removing claude-reactor from system PATH...$(NC)"
+	@./INSTALL --uninstall
 
 .PHONY: go-build-all
 go-build-all: ## Build Go binaries for multiple platforms
@@ -317,27 +347,27 @@ test-persistence: ## Test Claude CLI configuration persistence across container 
 .PHONY: run-base
 run-base: ## Run base variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting base variant container...$(NC)"
-	./claude-reactor --image base
+	./claude-reactor run --image base
 
 .PHONY: run-go
 run-go: ## Run Go variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting Go variant container...$(NC)"
-	./claude-reactor --image go
+	./claude-reactor run --image go
 
 .PHONY: run-full
 run-full: ## Run full variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting full variant container...$(NC)"
-	./claude-reactor --image full
+	./claude-reactor run --image full
 
 .PHONY: run-cloud
 run-cloud: ## Run cloud variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting cloud variant container...$(NC)"
-	./claude-reactor --image cloud
+	./claude-reactor run --image cloud
 
 .PHONY: run-k8s
 run-k8s: ## Run Kubernetes variant container (delegates to claude-reactor)
 	@echo "$(BLUE)Starting Kubernetes variant container...$(NC)"
-	./claude-reactor --image k8s
+	./claude-reactor run --image k8s
 
 .PHONY: run
 run: ## Run container with auto-detected or saved variant (delegates to claude-reactor)
@@ -347,7 +377,7 @@ run: ## Run container with auto-detected or saved variant (delegates to claude-r
 .PHONY: stop-all
 stop-all: ## Stop all running claude-agent containers (delegates to claude-reactor cleanup)
 	@echo "$(BLUE)Stopping all claude-agent containers...$(NC)"
-	@./claude-reactor --clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
+	@./claude-reactor clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
 	@echo "$(GREEN)✓ All containers stopped$(NC)"
 
 .PHONY: logs
@@ -362,18 +392,18 @@ logs: ## Show logs from most recent claude-agent container
 
 .PHONY: config
 config: ## Show current claude-reactor configuration
-	@./claude-reactor --show-config
+	@./claude-reactor config show
 
 .PHONY: variants
 variants: ## List available container variants
-	@./claude-reactor --list-variants
+	@./claude-reactor debug info
 
 ##@ Cleanup
 
 .PHONY: clean-containers
 clean-containers: ## Remove all claude-agent containers (delegates to claude-reactor)
 	@echo "$(BLUE)Removing claude-agent containers...$(NC)"
-	@./claude-reactor --clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
+	@./claude-reactor clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
 	@echo "$(GREEN)✓ Containers cleaned$(NC)"
 
 .PHONY: clean-images

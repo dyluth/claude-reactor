@@ -31,7 +31,7 @@ func (nm *NamingManager) GetImageName(variant string) (string, error) {
 		return "", fmt.Errorf("failed to get architecture for image name: %w", err)
 	}
 	
-	imageName := fmt.Sprintf("v2-claude-reactor-%s-%s", variant, arch)
+	imageName := fmt.Sprintf("claude-reactor-%s-%s", variant, arch)
 	nm.logger.Debugf("Generated image name: %s", imageName)
 	
 	return imageName, nil
@@ -52,7 +52,7 @@ func (nm *NamingManager) GetContainerName(variant, account string) (string, erro
 	}
 	
 	// Build container name parts
-	parts := []string{"v2-claude-reactor", variant, arch, projectHash}
+	parts := []string{"claude-reactor", variant, arch, projectHash}
 	
 	// Add account if specified, otherwise use "default"
 	if account != "" {

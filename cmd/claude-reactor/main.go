@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -56,17 +54,6 @@ support, and production-ready tooling.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildDate),
 		Run: func(cmd *cobra.Command, args []string) {
 			// Handle deprecated flags with clear migration guidance
-			if install, _ := cmd.Flags().GetBool("install"); install {
-				fmt.Fprintf(os.Stderr, "❌ The --install flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor install\n")
-				os.Exit(1)
-			}
-			
-			if uninstall, _ := cmd.Flags().GetBool("uninstall"); uninstall {
-				fmt.Fprintf(os.Stderr, "❌ The --uninstall flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor uninstall\n")
-				os.Exit(1)
-			}
 			
 			if listVariants, _ := cmd.Flags().GetBool("list-variants"); listVariants {
 				fmt.Fprintf(os.Stderr, "❌ The --list-variants flag has been removed. Use:\n")
@@ -112,13 +99,9 @@ support, and production-ready tooling.`,
 	rootCmd.Flags().Bool("list-variants", false, "Removed: use 'debug info'")
 	rootCmd.Flags().Bool("show-config", false, "Removed: use 'config show'")
 	rootCmd.Flags().String("variant", "", "Removed: use 'run --image'")
-	rootCmd.Flags().Bool("install", false, "Removed: use 'install' command")
-	rootCmd.Flags().Bool("uninstall", false, "Removed: use 'uninstall' command")
 	rootCmd.Flags().MarkHidden("list-variants")
 	rootCmd.Flags().MarkHidden("show-config")
 	rootCmd.Flags().MarkHidden("variant")
-	rootCmd.Flags().MarkHidden("install")
-	rootCmd.Flags().MarkHidden("uninstall")
 
 	// Add subcommands
 	rootCmd.AddCommand(
@@ -132,8 +115,6 @@ support, and production-ready tooling.`,
 		newHotReloadCmd(app),
 		newDebugCmd(app),
 		newCompletionCmd(app),
-		newInstallCmd(app),
-		newUninstallCmd(app),
 	)
 
 	return rootCmd
@@ -617,6 +598,12 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		return fmt.Errorf("invalid configuration: %w. Try using --image with one of: base, go, full, cloud, k8s, or a custom Docker image", err)
 	}
 	
+	// Save configuration to persist user preferences
+	if err := app.ConfigMgr.SaveConfig(config); err != nil {
+		app.Logger.Warnf("Failed to save configuration: %v", err)
+		// Don't fail the entire operation for this, just warn
+	}
+	
 	// Step 1.5: Validate custom Docker images
 	builtinVariants := []string{"base", "go", "full", "cloud", "k8s"}
 	isBuiltinVariant := false
@@ -727,13 +714,14 @@ func runContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		
 		// Step 5: Create container configuration
 		containerConfig := &pkg.ContainerConfig{
-			Image:       imageName,
-			Name:        containerName,
-			Variant:     config.Variant,
-			Platform:    platform,
-			Interactive: true,
-			TTY:         true,
-			Remove:      false, // Don't auto-remove - we manage lifecycle
+			Image:            imageName,
+			Name:             containerName,
+			Variant:          config.Variant,
+			Platform:         platform,
+			Interactive:      true,
+			TTY:              true,
+			Remove:           false, // Don't auto-remove - we manage lifecycle
+			RunClaudeUpgrade: true,  // Run claude upgrade after container startup
 		}
 		
 		// Add mounts (skip if requested for testing)
@@ -963,135 +951,6 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	return nil
 }
 
-// handleInstallation manages system installation and uninstallation (Phase 0.2)
-func handleInstallation(cmd *cobra.Command, app *pkg.AppContainer, install bool) error {
-	const installPath = "/usr/local/bin/claude-reactor"
-	
-	if install {
-		// Installation process
-		app.Logger.Info("🔧 Installing claude-reactor to system PATH...")
-		
-		// Get current executable path
-		execPath, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("failed to determine executable path: %w", err)
-		}
-		
-		app.Logger.Infof("📋 Source: %s", execPath)
-		app.Logger.Infof("🎯 Target: %s", installPath)
-		
-		// Check if we need sudo
-		if err := checkWritePermissions("/usr/local/bin"); err != nil {
-			app.Logger.Warn("⚠️  Installation requires sudo permissions for /usr/local/bin")
-			app.Logger.Info("💡 You may be prompted for your password...")
-			
-			// Use sudo to copy the binary
-			err := runWithSudo("cp", execPath, installPath)
-			if err != nil {
-				return fmt.Errorf("failed to install with sudo: %w", err)
-			}
-			
-			// Make executable
-			err = runWithSudo("chmod", "+x", installPath)
-			if err != nil {
-				return fmt.Errorf("failed to make executable with sudo: %w", err)
-			}
-		} else {
-			// Direct copy (no sudo needed)
-			err := copyFile(execPath, installPath)
-			if err != nil {
-				return fmt.Errorf("failed to copy binary: %w", err)
-			}
-			
-			// Make executable
-			err = os.Chmod(installPath, 0755)
-			if err != nil {
-				return fmt.Errorf("failed to make executable: %w", err)
-			}
-		}
-		
-		app.Logger.Info("✅ claude-reactor installed successfully!")
-		app.Logger.Info("💡 You can now use 'claude-reactor' from anywhere in your terminal")
-		app.Logger.Info("🧪 Test with: claude-reactor --version")
-		
-	} else {
-		// Uninstallation process
-		app.Logger.Info("🗑️ Removing claude-reactor from system PATH...")
-		
-		// Check if file exists
-		if _, err := os.Stat(installPath); os.IsNotExist(err) {
-			app.Logger.Info("✅ claude-reactor is not installed in system PATH")
-			return nil
-		}
-		
-		// Check if we need sudo
-		if err := checkWritePermissions("/usr/local/bin"); err != nil {
-			app.Logger.Warn("⚠️  Uninstallation requires sudo permissions for /usr/local/bin")
-			app.Logger.Info("💡 You may be prompted for your password...")
-			
-			err := runWithSudo("rm", "-f", installPath)
-			if err != nil {
-				return fmt.Errorf("failed to uninstall with sudo: %w", err)
-			}
-		} else {
-			// Direct removal (no sudo needed)
-			err := os.Remove(installPath)
-			if err != nil {
-				return fmt.Errorf("failed to remove binary: %w", err)
-			}
-		}
-		
-		app.Logger.Info("✅ claude-reactor removed from system PATH")
-		app.Logger.Info("💡 Local binary is still available at the original location")
-	}
-	
-	return nil
-}
-
-// checkWritePermissions checks if we can write to the target directory
-func checkWritePermissions(dir string) error {
-	// Try to create a temporary file to test permissions
-	testFile := filepath.Join(dir, ".claude-reactor-test")
-	file, err := os.Create(testFile)
-	if err != nil {
-		return err
-	}
-	file.Close()
-	os.Remove(testFile)
-	return nil
-}
-
-// runWithSudo executes a command with sudo
-func runWithSudo(command string, args ...string) error {
-	allArgs := append([]string{command}, args...)
-	cmd := exec.Command("sudo", allArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	return cmd.Run()
-}
-
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-	
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-	
-	_, err = io.Copy(destFile, sourceFile)
-	if err != nil {
-		return err
-	}
-	
-	return destFile.Sync()
-}
 
 // showEnhancedConfig displays comprehensive configuration information (Phase 0.4)
 func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
@@ -3434,67 +3293,3 @@ PowerShell:
 	return completionCmd
 }
 
-// newInstallCmd creates the install/uninstall command
-func newInstallCmd(app *pkg.AppContainer) *cobra.Command {
-	installCmd := &cobra.Command{
-		Use:   "install",
-		Short: "Install claude-reactor to system PATH",
-		Long: `Install claude-reactor to system PATH (/usr/local/bin) to make it available globally.
-
-This allows you to use 'claude-reactor' from anywhere in your terminal without 
-specifying the full path to the binary.
-
-The installation process will:
-- Copy the current binary to /usr/local/bin/claude-reactor
-- Make it executable with proper permissions
-- Request sudo permissions if needed
-
-After installation, you can use commands like:
-  claude-reactor run
-  claude-reactor --version
-  claude-reactor clean
-
-From any directory on your system.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return handleInstallation(cmd, app, true)
-		},
-	}
-
-	// Uninstall subcommand
-	uninstallCmd := &cobra.Command{
-		Use:   "uninstall",
-		Short: "Remove claude-reactor from system PATH",
-		Long: `Remove claude-reactor from system PATH (/usr/local/bin).
-
-This removes the global installation while keeping your local binary intact.
-You can still use claude-reactor from its original location after uninstalling.
-
-The uninstallation process will:
-- Remove /usr/local/bin/claude-reactor if it exists
-- Request sudo permissions if needed
-- Leave your local binary unchanged`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return handleInstallation(cmd, app, false)
-		},
-	}
-
-	installCmd.AddCommand(uninstallCmd)
-	return installCmd
-}
-
-// newUninstallCmd creates a standalone uninstall command for convenience
-func newUninstallCmd(app *pkg.AppContainer) *cobra.Command {
-	return &cobra.Command{
-		Use:   "uninstall",
-		Short: "Remove claude-reactor from system PATH",
-		Long: `Remove claude-reactor from system PATH (/usr/local/bin).
-
-This is a convenience command equivalent to 'claude-reactor install uninstall'.
-
-This removes the global installation while keeping your local binary intact.
-You can still use claude-reactor from its original location after uninstalling.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return handleInstallation(cmd, app, false)
-		},
-	}
-}
