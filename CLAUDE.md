@@ -41,8 +41,14 @@ This project creates a modular Docker containerization system for Claude CLI wit
 
 ```
 claude-reactor/
-├── claude-reactor              # Main script - intelligent container management
-├── Dockerfile                  # Multi-stage container definitions
+├── cmd/                       # Application entrypoints
+│   ├── claude-reactor/        # Main claude-reactor application
+│   └── reactor-fabric/        # Distributed MCP orchestrator (Phase 0+)
+├── internal/                  # Private application logic
+│   ├── reactor/               # Claude-reactor specific implementation
+│   └── fabric/                # Reactor-fabric orchestrator implementation
+├── pkg/                       # Shared data structures and utilities
+├── Dockerfile                 # Multi-stage container definitions
 ├── Makefile                   # Professional build automation (25+ targets)
 ├── CLAUDE.md                  # This file - project guidance
 ├── WORKFLOW.md                # Tool responsibilities and usage patterns
@@ -55,6 +61,8 @@ claude-reactor/
 │   ├── integration/           # Docker integration testing
 │   │   └── test-variants.sh
 │   └── README.md              # Test documentation
+├── ai-prompts/                # Implementation specifications
+│   └── 6-distributed-mcp-orchestration-system.md
 └── .claude-reactor            # Auto-generated project configuration
 ```
 
@@ -724,3 +732,180 @@ claude-reactor --verbose --log-level debug run --image your-image:tag
 - ✅ **Production architecture**: Multi-stage builds, security best practices, efficient resource usage
 
 **Ready for**: Personal projects, team development, educational use, and foundation for enterprise development workflows.
+
+## Reactor-Fabric Implementation Guide
+
+### **Implementation Phases**
+
+This project is implementing **Reactor-Fabric**, a distributed MCP orchestration system as defined in `ai-prompts/6-distributed-mcp-orchestration-system.md`. Implementation follows strict phase ordering:
+
+#### **Phase 0 - Prerequisite Repository Refactoring (MANDATORY FIRST)**
+- **Goal**: Restructure repository to support multiple Go applications from shared codebase
+- **Gate**: ALL existing tests must pass after refactoring before Phase 1 begins
+- **Actions**:
+  - Move claude-reactor logic to `cmd/claude-reactor/` and `internal/reactor/`
+  - Update Makefile for dual build targets (`make build-reactor`, `make build-fabric`)
+  - Ensure 100% backward compatibility for existing claude-reactor functionality
+
+#### **Phase 1 - Core Orchestrator**
+- **Goal**: Foundational orchestrator with YAML parsing and Docker container management
+- **Deliverables**:
+  - Go project structure under `cmd/reactor-fabric/` and `internal/fabric/`
+  - YAML configuration parsing using structs in `pkg/`
+  - Docker SDK integration for container lifecycle management
+  - Makefile targets for reactor-fabric build and execution
+
+#### **Phase 2 - MCP Proxying & Client Integration (MVP)**
+- **Goal**: Enable claude-reactor client to register and use dynamically spawned services
+- **Deliverables**:
+  - MCP server endpoint with session management
+  - `fabric/registerClient` tool implementation
+  - Transparent proxy logic for client-container communication
+  - Volume mount injection using session context
+  - End-to-end single-client workflow
+
+#### **Phase 3 - Multi-Client & Operations**
+- **Goal**: Production-ready system with comprehensive tooling and documentation
+- **Deliverables**:
+  - Documentation structure (`docs/README.md`, `DEVELOPMENT.md`, `USAGE.md`)
+  - `claude-mcp-suite.yaml` schema and example templates
+  - `make validate-config` and `make test-onboarding` targets
+  - Concurrent client test scenarios
+  - Troubleshooting procedures
+
+### **Key Implementation Requirements**
+
+#### **Backward Compatibility (Critical)**
+- Claude-reactor MUST function identically when reactor-fabric is not present
+- No hard dependencies between applications
+- Graceful fallback with clear warning messages
+
+#### **Discovery & Connection**
+- Environment variable: `REACTOR_FABRIC_ENDPOINT` 
+- Client behavior: If set but unreachable, warn and fallback to standalone mode
+- Default: Standalone operation (no orchestrator required)
+
+#### **Security Model**
+- **Mount Validation**: Strict validation against `allowed_mount_roots` in YAML config
+- **Docker Socket**: All Docker SDK calls with 30-second timeout contexts
+- **Path Security**: Resolve and validate all mount paths against allowlist
+
+#### **Performance Targets**
+- **P95 Container Start**: <3.5 seconds from tool request to container ready
+- **P99 Proxy Latency**: <50ms orchestrator overhead
+- **Memory**: <200MB orchestrator, <500MB per service container
+- **Concurrency**: 10+ service containers on typical developer machine
+
+### **Development Workflow for Reactor-Fabric**
+
+#### **Getting Started**
+```bash
+# Phase 0: Verify current state
+make test-unit                    # Must pass 100% before refactoring
+make test                         # Full test suite validation
+
+# Phase 1+: Development workflow
+make build-fabric                 # Build reactor-fabric binary
+make validate-config example.yaml # Validate configuration syntax
+make test-fabric                  # Run fabric-specific tests
+```
+
+#### **Testing Strategy (TDD Required)**
+```bash
+# Unit tests (Phase 1)
+make test-unit-fabric            # YAML parsing, container lifecycle
+make test-unit-all               # All unit tests including reactor
+
+# Integration tests (Phase 2) 
+make test-integration-fabric     # Docker daemon integration
+make test-mcp-proxy             # MCP communication flow
+
+# End-to-end tests (Phase 3)
+make test-e2e-fabric            # Full orchestrator workflow
+make test-concurrent-clients    # Multi-client scenarios
+```
+
+#### **Configuration Development**
+```yaml
+# Development claude-mcp-suite.yaml template
+version: "1.0"
+orchestrator:
+  allowed_mount_roots:
+    - "/Users/"
+    - "/home/"
+    - "/tmp/"
+
+mcp_services:
+  filesystem:
+    image: "ghcr.io/modelcontextprotocol/server-filesystem:latest"
+    timeout: "1m"
+  
+  git:
+    image: "ghcr.io/modelcontextprotocol/server-git:latest" 
+    timeout: "5m"
+    
+  claude_expert:
+    image: "claude-reactor:go"
+    timeout: "10m"
+    config:
+      account: "default"
+      danger_mode: false
+```
+
+### **Error Handling & JSON-RPC Codes**
+
+#### **Custom Error Codes**
+- `-32001`: Docker Daemon Unresponsive
+- `-32002`: Container Start Failure  
+- `-32003`: Invalid Suite Configuration
+- `-32004`: Security Violation (disallowed mount)
+- `-32005`: Service Not Found
+
+#### **Graceful Degradation**
+- Single service failure must not crash orchestrator
+- Errors isolated to requesting client only
+- Detailed logging for debugging and monitoring
+
+### **Code Architecture Patterns**
+
+#### **Shared Types (pkg/)**
+```go
+// Core configuration structures
+type MCPSuite struct {
+    Version      string                `yaml:"version"`
+    Orchestrator OrchestratorConfig    `yaml:"orchestrator"`
+    Services     map[string]MCPService `yaml:"mcp_services"`
+}
+
+type ClientContext struct {
+    SessionID string
+    Mounts    []Mount
+}
+```
+
+#### **Transparent Proxy Pattern**
+- Inspect only first message for `fabric/registerClient`
+- Route subsequent messages by session ID without parsing
+- Maintain connection state for cleanup
+
+#### **Container Lifecycle Management**
+- On-demand container creation per service request
+- Session-specific volume mounts from client context
+- Configurable idle timeout with automatic cleanup
+- Health check integration for startup validation
+
+### **Professional Standards**
+
+#### **Documentation Requirements**
+- Comprehensive API documentation for MCP tools
+- Example configurations for common use cases  
+- Troubleshooting guides for Docker and connectivity issues
+- Security considerations and best practices
+
+#### **Operational Tooling**
+- Configuration validation utilities
+- Health check endpoints for monitoring
+- Structured logging with appropriate levels
+- Metrics collection for performance monitoring
+
+This implementation transforms Claude-Reactor from a single-container system into a distributed AI orchestration platform while maintaining its zero-configuration philosophy and professional automation standards.

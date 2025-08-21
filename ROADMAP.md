@@ -169,6 +169,12 @@ make dev                            # Start with live reload enabled
 
 **Why High Value**: Eliminates the edit-rebuild-test cycle delay that significantly slows down development iteration.
 
+### NOTE
+we are deviating here to implement:
+5) custom docker image support 
+6) distributed MCP orchestration
+
+
 ### **5. Environment Management** ⭐
 **Priority**: Medium Value  
 **Effort**: Medium  
@@ -181,6 +187,7 @@ make dev                            # Start with live reload enabled
 ```
 
 **Impact**: Provides secure, organized way to manage different environments and sensitive configuration.
+
 
 ### **6. Plugin System** 💡
 **Priority**: Future Value  
