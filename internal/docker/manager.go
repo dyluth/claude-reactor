@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/moby/term"
 	
 	"claude-reactor/pkg"
 )
@@ -646,30 +649,79 @@ func (m *manager) attachInteractive(ctx context.Context, containerID string, com
 	
 	m.logger.Info("✅ Successfully attached to container - press Ctrl+C to disconnect")
 	
-	// Handle I/O in separate goroutines
-	go func() {
-		io.Copy(os.Stdout, hijackedResp.Reader)
-	}()
+	// Set up proper terminal handling for keystroke interpretation
+	fd := os.Stdin.Fd()
+	var oldState *term.State
 	
-	go func() {
-		io.Copy(hijackedResp.Conn, os.Stdin)
-	}()
-	
-	// Wait for exec to complete
-	for {
-		inspectResp, err := m.client.ContainerExecInspect(ctx, execResp.ID)
+	// Check if stdin is a terminal and set raw mode
+	if term.IsTerminal(fd) {
+		oldState, err = term.MakeRaw(fd)
 		if err != nil {
-			return fmt.Errorf("failed to inspect exec instance: %w", err)
+			m.logger.Warnf("Failed to set terminal to raw mode: %v", err)
+		} else {
+			// Ensure we restore terminal state on exit
+			defer func() {
+				if oldState != nil {
+					term.RestoreTerminal(fd, oldState)
+				}
+			}()
 		}
-		
-		if !inspectResp.Running {
-			m.logger.Debug("Exec instance completed")
-			break
-		}
-		
-		time.Sleep(500 * time.Millisecond)
 	}
 	
+	// Set up signal handling to properly restore terminal on interrupt
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	
+	// Handle I/O with proper error handling
+	inputDone := make(chan error, 1)
+	outputDone := make(chan error, 1)
+	
+	// Copy output from container to stdout
+	go func() {
+		_, err := io.Copy(os.Stdout, hijackedResp.Reader)
+		outputDone <- err
+	}()
+	
+	// Copy input from stdin to container
+	go func() {
+		_, err := io.Copy(hijackedResp.Conn, os.Stdin)
+		inputDone <- err
+	}()
+	
+	// Wait for completion or signal
+	select {
+	case <-sigChan:
+		m.logger.Debug("Received interrupt signal, disconnecting...")
+		// Restore terminal state before exiting
+		if oldState != nil {
+			term.RestoreTerminal(fd, oldState)
+		}
+		return fmt.Errorf("interrupted by user")
+		
+	case err := <-inputDone:
+		if err != nil {
+			m.logger.Debugf("Input stream ended: %v", err)
+		}
+		
+	case err := <-outputDone:
+		if err != nil {
+			m.logger.Debugf("Output stream ended: %v", err)
+		}
+	}
+	
+	// Check if exec is still running
+	inspectResp, err := m.client.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return fmt.Errorf("failed to inspect exec instance: %w", err)
+	}
+	
+	if inspectResp.Running {
+		m.logger.Debug("Exec still running, waiting for completion...")
+		// Give it a moment to complete
+		time.Sleep(1 * time.Second)
+	}
+	
+	m.logger.Debug("Interactive session completed")
 	return nil
 }
 
