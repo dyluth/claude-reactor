@@ -54,8 +54,8 @@
 
 ### v2 Prefix Implementation ✅
 **Implementation**: Development isolation through image/container naming
-- ✅ Image names - All images use `v2-claude-reactor-*` prefix
-- ✅ Container names - All containers use `v2-claude-reactor-*` prefix  
+- ✅ Image names - All images use `claude-reactor-*` prefix
+- ✅ Container names - All containers use `claude-reactor-*` prefix  
 - ✅ Isolation - Prevents conflicts with existing bash script usage
 - ✅ Documentation - Roadmap documents removal when Go CLI replaces bash version
 
@@ -70,7 +70,7 @@
 - Installation flags: ✅ 2 matches (--install, --uninstall)  
 - Continue flag: ✅ 2 matches (flag + description)
 - Enhanced config: ✅ Working (displays Registry Configuration section)
-- v2 prefix: ✅ Working (shows v2-claude-reactor in names)
+- v2 prefix: ✅ Working (shows claude-reactor in names)
 
 **Test Coverage**:
 - ✅ Flag parsing and validation
