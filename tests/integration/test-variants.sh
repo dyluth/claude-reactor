@@ -197,13 +197,50 @@ test_variant_tools() {
     fi
 }
 
+# Get architecture-specific binary path
+get_reactor_binary() {
+    local arch=$(detect_architecture)
+    local os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    
+    # Try architecture-specific binary first
+    local arch_binary="$PROJECT_ROOT/dist/claude-reactor-${os}-${arch}"
+    if [[ -x "$arch_binary" ]]; then
+        echo "$arch_binary"
+        return
+    fi
+    
+    # Try OS-specific binary (for backward compatibility)
+    local os_binary="$PROJECT_ROOT/claude-reactor-${os}"
+    if [[ -x "$os_binary" ]]; then
+        echo "$os_binary"
+        return
+    fi
+    
+    # Fall back to generic binary
+    local generic_binary="$PROJECT_ROOT/claude-reactor"
+    if [[ -x "$generic_binary" ]]; then
+        echo "$generic_binary"
+        return
+    fi
+    
+    # No binary found
+    echo ""
+    return 1
+}
+
 # Test claude-reactor script with different options
 test_script_options() {
     local test_dir="script_test_$$"
     mkdir -p "$TEST_DIR/$test_dir"
     cd "$TEST_DIR/$test_dir"
     
-    local reactor_script="$PROJECT_ROOT/claude-reactor"
+    local reactor_script=$(get_reactor_binary)
+    if [[ -z "$reactor_script" ]]; then
+        log_failure "No claude-reactor binary found"
+        return 1
+    fi
+    
+    log_info "Using binary: $reactor_script"
     
     # Test build command (list variants capability is now in build help)
     if ! "$reactor_script" build --help > /dev/null 2>&1; then
@@ -244,7 +281,13 @@ test_config_file_integration() {
     mkdir -p "$TEST_DIR/$test_dir"
     cd "$TEST_DIR/$test_dir"
     
-    local reactor_script="$PROJECT_ROOT/claude-reactor"
+    local reactor_script=$(get_reactor_binary)
+    if [[ -z "$reactor_script" ]]; then
+        log_failure "No claude-reactor binary found"
+        cd "$TEST_DIR"
+        rm -rf "$test_dir"
+        return 1
+    fi
     
     # Create a go.mod to test auto-detection
     echo 'module test' > go.mod
@@ -258,15 +301,28 @@ test_config_file_integration() {
         return 1
     fi
     
-    # Set explicit image and verify config file creation  
-    "$reactor_script" run --image full --help > /dev/null 2>&1 || true
+    # Set explicit image and verify config file creation
+    # We expect this to fail (no Docker image built), but it should save the config first
+    log_info "Running: $reactor_script run --image full (expecting failure but config should be saved)"
+    
+    # Capture output for debugging with verbose logging (remove timeout to see full output)
+    output=$(timeout 30s "$reactor_script" run --image full --verbose 2>&1 || true)
+    
+    log_info "Full command output:"
+    echo "$output"
+    log_info "Current directory: $(pwd)"
+    log_info "Files in directory: $(ls -la)"
     
     if [ ! -f ".claude-reactor" ]; then
         log_failure "Configuration file not created"
+        log_info "Expected .claude-reactor file does not exist"
         cd "$TEST_DIR"
         rm -rf "$test_dir"
         return 1
     fi
+    
+    log_info "✅ Configuration file created: .claude-reactor"
+    log_info "Config file contents: $(cat .claude-reactor)"
     
     # Note: Config file still uses 'variant=' for backward compatibility
     if ! grep -q "variant=full" ".claude-reactor"; then

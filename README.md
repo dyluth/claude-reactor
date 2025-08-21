@@ -19,7 +19,7 @@ Claude-Reactor transforms the basic Claude CLI into a comprehensive development 
 ### Prerequisites
 
 - Docker Desktop installed and running
-- Go binary available at `/app/claude-reactor` (or build from source)
+- Claude-reactor binary (see Installation section below)
 
 ### Basic Usage
 
@@ -235,7 +235,23 @@ Generate new projects with intelligent defaults:
 ./claude-reactor debug cache info        # Show image validation cache
 ```
 
-### Build from Source
+## Installation
+
+### Option 1: Pre-built Binaries (Recommended)
+
+```bash
+# Build and auto-install (detects best method for your OS)
+make build && ./INSTALL
+
+# Specific installation methods:
+make build && ./INSTALL --local    # ~/bin (recommended for macOS)  
+make build && ./INSTALL --system   # /usr/local/bin (good for Linux)
+
+# Or use Makefile shortcut
+make build install                  # Auto-detection
+```
+
+### Option 2: Build from Source
 
 ```bash
 # Clone and build
@@ -243,8 +259,25 @@ git clone <repository>
 cd claude-reactor
 make build
 
-# The binary will be available as ./claude-reactor
+# Install to system PATH (optional)
+./INSTALL
+
+# Or use directly without installing
+./dist/claude-reactor-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) --help
 ```
+
+**The INSTALL script will:**
+- **Auto-detect** the best installation method for your OS
+- **macOS**: Install to `~/bin` (avoids Gatekeeper security issues)
+- **Linux**: Install to `/usr/local/bin` (system-wide access)  
+- Make it executable and handle macOS security restrictions
+- Provide PATH setup instructions when needed
+
+**Supported Platforms:**
+- Linux: x86_64, arm64
+- macOS: x86_64, arm64 (Apple Silicon)
+
+**To uninstall:** `./INSTALL --uninstall`
 
 ## Troubleshooting
 

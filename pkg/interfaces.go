@@ -164,9 +164,10 @@ type ContainerConfig struct {
 	Environment map[string]string `yaml:"environment,omitempty"`
 	Ports       []string          `yaml:"ports,omitempty"`
 	Command     []string          `yaml:"command,omitempty"`
-	Interactive bool              `yaml:"interactive"`
-	TTY         bool              `yaml:"tty"`
-	Remove      bool              `yaml:"remove"`
+	Interactive      bool              `yaml:"interactive"`
+	TTY              bool              `yaml:"tty"`
+	Remove           bool              `yaml:"remove"`
+	RunClaudeUpgrade bool              `yaml:"run_claude_upgrade,omitempty"`
 }
 
 // Mount represents a container mount point
