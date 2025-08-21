@@ -1,0 +1,55 @@
+# Reactor-Fabric Service Suite Configuration
+version: "1.0"
+
+# Global settings for the orchestrator
+orchestrator:
+  # Allowed host paths that clients can request to mount.
+  # IMPORTANT: For security, keep this as restrictive as possible.
+  allowed_mount_roots:
+    - "/home/"
+    - "/Users/"
+    - "/tmp/"
+
+# Available MCP service definitions
+mcp_services:
+  # Provides basic filesystem operations (traditional tool service).
+  filesystem:
+    image: "ghcr.io/modelcontextprotocol/server-filesystem:latest"
+    # Auto-detected as tool_service with reuse_per_session strategy
+    # timeout: "2m" - auto-applied default
+
+  # Provides tools for interacting with a Git repository (traditional tool service).
+  git:
+    image: "ghcr.io/modelcontextprotocol/server-git:latest"
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 15  # Refresh after 15 git operations
+    max_container_age: "25m"     # Or after 25 minutes
+
+  # Provides tools for running shell commands (traditional tool service).
+  # Note: This is powerful and potentially dangerous.
+  shell:
+    image: "ghcr.io/modelcontextprotocol/server-shell:latest"
+    container_strategy: "fresh_per_call"  # Security: fresh shell each time
+    timeout: "1m"
+
+  # Claude-based Python expert (LLM agent service).
+  python_expert:
+    image: "ghcr.io/dyluth/claude-reactor/python:latest"
+    # Auto-detected as llm_agent with fresh_per_call strategy (fresh context window)
+    # timeout: "10m" - auto-applied default for LLM agents
+    config:
+      account: "work_account"
+      danger_mode: false
+      specialty: "Expert in Python, Django, and data analysis."
+
+  # Another LLM agent with smart refresh strategy for balanced performance
+  frontend_expert:
+    image: "claude-reactor:frontend"
+    service_type: "llm_agent"  # Explicit type (auto-detected anyway)
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 3  # Refresh after 3 calls to preserve context
+    max_container_age: "15m"    # Or after 15 minutes
+    memory_threshold: "350MB"   # Or when memory usage exceeds threshold
+    config:
+      account: "personal"
+      specialty: "React, TypeScript, and modern frontend architecture."
