@@ -9,18 +9,21 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"claude-reactor/internal/reactor/logging"
 	"claude-reactor/pkg"
 )
 
 // ConfigManager handles MCP suite configuration parsing and validation
 type ConfigManager struct {
-	logger pkg.Logger
+	logger   pkg.Logger
+	detector *ServiceDetector
 }
 
 // NewConfigManager creates a new configuration manager
 func NewConfigManager(logger pkg.Logger) *ConfigManager {
 	return &ConfigManager{
-		logger: logger,
+		logger:   logger,
+		detector: NewServiceDetector(logger),
 	}
 }
 
@@ -81,8 +84,19 @@ func (c *ConfigManager) ValidateConfig(suite *pkg.MCPSuite) error {
 	}
 
 	for name, service := range suite.Services {
+		// Apply intelligent defaults before validation
+		c.detector.ApplyDefaults(&service)
+		
+		// Update the service in the map with applied defaults
+		suite.Services[name] = service
+		
 		if err := c.validateService(name, &service); err != nil {
 			return fmt.Errorf("service %s validation error: %w", name, err)
+		}
+		
+		// Validate container strategy configuration
+		if err := c.detector.ValidateContainerStrategy(&service); err != nil {
+			return fmt.Errorf("service %s container strategy error: %w", name, err)
 		}
 	}
 
@@ -284,4 +298,9 @@ mcp_services:
 
 	c.logger.Info("Default configuration written to %s", filepath)
 	return nil
+}
+
+// NewStandaloneLogger creates a simple logger for validation commands that don't need full logging infrastructure
+func NewStandaloneLogger() pkg.Logger {
+	return logging.NewLogger()
 }

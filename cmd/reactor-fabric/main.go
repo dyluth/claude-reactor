@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"claude-reactor/internal/fabric"
-	"claude-reactor/pkg"
 )
 
 var (
@@ -28,18 +27,11 @@ func main() {
 // Execute runs the root command
 func Execute() error {
 	ctx := context.Background()
-	
-	// Initialize fabric orchestrator
-	orchestrator, err := fabric.NewOrchestrator()
-	if err != nil {
-		return fmt.Errorf("failed to initialize orchestrator: %w", err)
-	}
-
-	rootCmd := newRootCmd(orchestrator)
+	rootCmd := newRootCmd()
 	return rootCmd.ExecuteContext(ctx)
 }
 
-func newRootCmd(orchestrator pkg.FabricOrchestrator) *cobra.Command {
+func newRootCmd() *cobra.Command {
 	var rootCmd = &cobra.Command{
 		Use:   "reactor-fabric",
 		Short: "Reactor-Fabric - Distributed MCP orchestration system",
@@ -61,14 +53,14 @@ and is designed to handle multiple, concurrent client connections.`,
 	rootCmd.PersistentFlags().StringP("listen", "l", "localhost:8080", "Address and port to listen on")
 	
 	// Add subcommands
-	rootCmd.AddCommand(newStartCmd(orchestrator))
+	rootCmd.AddCommand(newStartCmd())
 	rootCmd.AddCommand(newValidateConfigCmd())
 	rootCmd.AddCommand(newVersionCmd())
 
 	return rootCmd
 }
 
-func newStartCmd(orchestrator pkg.FabricOrchestrator) *cobra.Command {
+func newStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
 		Short: "Start the MCP orchestration server",
@@ -77,6 +69,12 @@ configuration file, validate the setup, and start listening for MCP client conne
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFile, _ := cmd.Flags().GetString("config")
 			listen, _ := cmd.Flags().GetString("listen")
+			
+			// Initialize fabric orchestrator only when starting
+			orchestrator, err := fabric.NewOrchestrator()
+			if err != nil {
+				return fmt.Errorf("failed to initialize orchestrator: %w", err)
+			}
 			
 			return orchestrator.Start(cmd.Context(), configFile, listen)
 		},
@@ -92,9 +90,29 @@ and logical errors without starting the orchestrator.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFile, _ := cmd.Flags().GetString("config")
 			
-			// This will be implemented in Phase 1-2
+			// Create a standalone config manager for validation (no Docker required)
+			logger := fabric.NewStandaloneLogger()
+			configManager := fabric.NewConfigManager(logger)
+			
 			fmt.Printf("Validating configuration file: %s\n", configFile)
-			fmt.Println("⚠ Configuration validation not yet implemented (Phase 1 feature)")
+			
+			// Load and validate the configuration
+			suite, err := configManager.LoadConfig(configFile)
+			if err != nil {
+				fmt.Printf("❌ Configuration validation failed: %v\n", err)
+				return fmt.Errorf("configuration validation failed: %w", err)
+			}
+			
+			fmt.Printf("✅ Configuration is valid\n")
+			fmt.Printf("📋 Found %d MCP services:\n", len(suite.Services))
+			for name, service := range suite.Services {
+				timeout := service.Timeout
+				if timeout == "" {
+					timeout = "default"
+				}
+				fmt.Printf("  📦 %s: %s (timeout: %s)\n", name, service.Image, timeout)
+			}
+			
 			return nil
 		},
 	}

@@ -16,6 +16,7 @@ import (
 type MCPServer struct {
 	suite         *pkg.MCPSuite
 	dockerManager *DockerManager
+	proxy         *ContainerProxy
 	logger        pkg.Logger
 	sessions      map[string]*pkg.ClientSession
 	containers    map[string]*pkg.ContainerInfo
@@ -29,6 +30,7 @@ func NewMCPServer(suite *pkg.MCPSuite, dockerManager *DockerManager, logger pkg.
 	return &MCPServer{
 		suite:         suite,
 		dockerManager: dockerManager,
+		proxy:         NewContainerProxy(logger),
 		logger:        logger,
 		sessions:      make(map[string]*pkg.ClientSession),
 		containers:    make(map[string]*pkg.ContainerInfo),
@@ -409,13 +411,37 @@ func (s *MCPServer) handleToolCall(ctx context.Context, sessionID string, messag
 		}, nil
 	}
 
-	// Check if we already have a container for this service and session
-	containerKey := fmt.Sprintf("%s-%s", serviceName, sessionID)
+	// Apply service detector for container strategy decisions
+	detector := NewServiceDetector(s.logger)
+	detector.ApplyDefaults(&service)
+
+	// Determine container key based on strategy
+	containerKey := detector.GetContainerKey(serviceName, sessionID, service.ContainerStrategy)
 	container, containerExists := s.containers[containerKey]
+
+	// Check if we need to refresh an existing container (smart_refresh strategy)
+	if containerExists && service.ContainerStrategy == pkg.StrategySmartRefresh {
+		if s.shouldRefreshContainer(container, &service) {
+			s.logger.Info("Refreshing container due to smart refresh criteria", 
+				"service", serviceName, 
+				"container", container.ID[:12],
+				"calls", container.CallCount)
+			
+			// Remove old container
+			if err := s.dockerManager.StopService(ctx, container); err != nil {
+				s.logger.Warn("Failed to stop old container during refresh", "error", err)
+			}
+			delete(s.containers, containerKey)
+			containerExists = false
+		}
+	}
 
 	if !containerExists {
 		// Start a new container for this service
-		s.logger.Info("Starting new container for service", "service", serviceName, "session", sessionID)
+		s.logger.Info("Starting new container for service", 
+			"service", serviceName, 
+			"session", sessionID,
+			"strategy", service.ContainerStrategy)
 
 		var err error
 		container, err = s.dockerManager.StartService(ctx, serviceName, &service, session.ClientContext)
@@ -430,28 +456,90 @@ func (s *MCPServer) handleToolCall(ctx context.Context, sessionID string, messag
 			}, nil
 		}
 
+		// Initialize container tracking for smart refresh
+		container.CallCount = 0
+		container.LastUsed = time.Now()
+		
 		// Store container info
 		s.containers[containerKey] = container
-		s.logger.Info("Service container started", "service", serviceName, "container", container.ID[:12])
+		s.logger.Info("Service container started", 
+			"service", serviceName, 
+			"container", container.ID[:12],
+			"strategy", service.ContainerStrategy)
 	}
 
-	// For now, return a success response indicating the service is available
-	// In a full implementation, this would proxy the actual tool call to the container
-	s.logger.Info("Tool call handled", "service", serviceName, "tool", toolNameStr, "session", sessionID)
+	// Update container usage tracking
+	container.CallCount++
+	container.LastUsed = time.Now()
+	s.containers[containerKey] = container
 
-	return &pkg.MCPMessage{
-		JsonRPC: "2.0",
-		ID:      message.ID,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": fmt.Sprintf("Successfully routed tool call %s to service %s (container: %s)", 
-						toolNameStr, serviceName, container.ID[:12]),
-				},
+	// Health check the container before proxying
+	if err := s.proxy.HealthCheckContainer(ctx, container); err != nil {
+		return &pkg.MCPMessage{
+			JsonRPC: "2.0",
+			ID:      message.ID,
+			Error: &pkg.MCPError{
+				Code:    pkg.ErrorContainerStartFailure,
+				Message: fmt.Sprintf("Container health check failed: %v", err),
 			},
-		},
-	}, nil
+		}, nil
+	}
+
+	// Proxy the tool call to the container
+	s.logger.Info("Proxying tool call to container", "service", serviceName, "tool", toolNameStr, "session", sessionID)
+	
+	response, err := s.proxy.ProxyToContainer(ctx, container, message)
+	if err != nil {
+		return &pkg.MCPMessage{
+			JsonRPC: "2.0",
+			ID:      message.ID,
+			Error: &pkg.MCPError{
+				Code:    pkg.ErrorInternalError,
+				Message: fmt.Sprintf("Failed to proxy to container: %v", err),
+			},
+		}, nil
+	}
+
+	s.logger.Info("Tool call completed successfully", "service", serviceName, "tool", toolNameStr, "session", sessionID)
+	return response, nil
+}
+
+// shouldRefreshContainer determines if a container should be refreshed based on smart refresh criteria
+func (s *MCPServer) shouldRefreshContainer(container *pkg.ContainerInfo, service *pkg.MCPService) bool {
+	// Check call count threshold
+	if service.MaxCallsPerContainer > 0 && container.CallCount >= service.MaxCallsPerContainer {
+		s.logger.Debug("Container refresh due to call count threshold", 
+			"container", container.ID[:12],
+			"calls", container.CallCount, 
+			"threshold", service.MaxCallsPerContainer)
+		return true
+	}
+	
+	// Check container age threshold
+	if service.MaxContainerAge != "" {
+		maxAge, err := time.ParseDuration(service.MaxContainerAge)
+		if err == nil {
+			containerAge := time.Since(container.StartTime)
+			if containerAge >= maxAge {
+				s.logger.Debug("Container refresh due to age threshold", 
+					"container", container.ID[:12],
+					"age", containerAge, 
+					"threshold", maxAge)
+				return true
+			}
+		}
+	}
+	
+	// TODO: Check memory threshold when Docker stats API is available
+	// This would require implementing container memory monitoring
+	if service.MemoryThreshold != "" {
+		s.logger.Debug("Memory threshold checking not yet implemented", 
+			"container", container.ID[:12],
+			"threshold", service.MemoryThreshold)
+		// For now, we don't refresh based on memory
+	}
+	
+	return false
 }
 
 // cleanupSession removes a session and its associated containers

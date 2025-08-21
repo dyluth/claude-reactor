@@ -1,0 +1,127 @@
+# Advanced Reactor-Fabric Service Suite Configuration
+# Demonstrates Phase 3 container strategy features
+version: "1.0"
+
+# Global settings for the orchestrator
+orchestrator:
+  # Allowed host paths that clients can request to mount.
+  # IMPORTANT: For security, keep this as restrictive as possible.
+  allowed_mount_roots:
+    - "/home/"
+    - "/Users/"
+    - "/tmp/"
+    - "/opt/workspace/"
+
+# Available MCP service definitions with advanced container strategies
+mcp_services:
+  # ============================================================================
+  # TRADITIONAL TOOL SERVICES (auto-detected as tool_service)
+  # ============================================================================
+  
+  # Basic filesystem operations - reuse containers for efficiency
+  filesystem:
+    image: "ghcr.io/modelcontextprotocol/server-filesystem:latest"
+    # Auto-detected: service_type: tool_service, container_strategy: reuse_per_session
+    # Auto-applied: timeout: 2m
+    
+  # Database operations with smart refresh based on call count
+  postgres_tools:
+    image: "ghcr.io/modelcontextprotocol/server-postgres:latest"
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 25  # Refresh after 25 database operations
+    max_container_age: "45m"     # Or after 45 minutes of uptime
+    memory_threshold: "200MB"    # Or when memory usage exceeds threshold
+    timeout: "3m"
+    
+  # High-security shell access - fresh container every time
+  secure_shell:
+    image: "ghcr.io/modelcontextprotocol/server-shell:latest"
+    service_type: "tool_service"  # Explicit type (would be auto-detected anyway)
+    container_strategy: "fresh_per_call"  # Security: isolate every shell execution
+    timeout: "30s"
+    
+  # Git operations with moderate refresh frequency
+  git_advanced:
+    image: "ghcr.io/modelcontextprotocol/server-git:latest"
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 10  # Refresh after 10 git operations
+    max_container_age: "20m"     # Or after 20 minutes
+    timeout: "5m"
+    
+  # ============================================================================
+  # LLM AGENT SERVICES (auto-detected as llm_agent)
+  # ============================================================================
+  
+  # Python development expert - fresh context every call (default for LLM agents)
+  python_expert:
+    image: "ghcr.io/dyluth/claude-reactor/python:latest"
+    # Auto-detected: service_type: llm_agent, container_strategy: fresh_per_call
+    # Auto-applied: timeout: 10m
+    config:
+      account: "development"
+      danger_mode: false
+      specialty: "Expert in Python, Django, FastAPI, and data science libraries"
+      
+  # Frontend specialist with smart refresh for balanced performance/context
+  react_specialist:
+    image: "claude-reactor:frontend"
+    service_type: "llm_agent"  # Explicit (would be auto-detected from image name)
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 4   # Refresh after 4 calls to preserve context quality
+    max_container_age: "12m"     # Or after 12 minutes
+    memory_threshold: "400MB"    # Or when memory usage gets high
+    config:
+      account: "personal"
+      specialty: "React, TypeScript, Next.js, and modern CSS frameworks"
+      
+  # Infrastructure expert - session-based reuse for faster responses
+  devops_expert:
+    image: "claude-reactor:devops"
+    service_type: "llm_agent"
+    container_strategy: "reuse_per_session"  # Faster for iterative DevOps work
+    timeout: "15m"  # Longer timeout for complex infrastructure tasks
+    config:
+      account: "work"
+      danger_mode: true  # Allow system-level operations
+      specialty: "Kubernetes, Terraform, AWS, Docker, and CI/CD pipelines"
+      
+  # Security analyst - fresh container for each analysis (security paranoia)
+  security_analyst:
+    image: "ghcr.io/dyluth/claude-reactor/security:latest"
+    container_strategy: "fresh_per_call"  # Maximum isolation for security analysis
+    timeout: "8m"
+    config:
+      account: "security_team"
+      specialty: "Vulnerability analysis, threat modeling, and secure coding practices"
+      
+  # ============================================================================
+  # HYBRID/SPECIALIZED SERVICES
+  # ============================================================================
+  
+  # Code review assistant - smart refresh for context preservation
+  code_reviewer:
+    image: "claude-reactor:reviewer"
+    service_type: "llm_agent"
+    container_strategy: "smart_refresh"
+    max_calls_per_container: 8   # Refresh after reviewing 8 files/PRs
+    max_container_age: "25m"     # Or after 25 minutes
+    memory_threshold: "350MB"    # Or when memory gets high from large codebases
+    timeout: "12m"
+    config:
+      specialty: "Code quality, security, performance, and architecture review"
+      
+  # API testing service - reuse for efficiency during test development
+  api_tester:
+    image: "ghcr.io/modelcontextprotocol/server-http-test:latest"
+    service_type: "tool_service"
+    container_strategy: "reuse_per_session"
+    timeout: "2m"
+    
+  # Documentation generator - fresh context for each documentation session
+  docs_generator:
+    image: "claude-reactor:docs"
+    service_type: "llm_agent"
+    container_strategy: "fresh_per_call"
+    timeout: "15m"
+    config:
+      specialty: "Technical documentation, API docs, and user guides"

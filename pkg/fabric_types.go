@@ -21,9 +21,14 @@ type OrchestratorConfig struct {
 
 // MCPService defines a single, orchestrable MCP agent.
 type MCPService struct {
-	Image   string                 `yaml:"image"`
-	Config  map[string]interface{} `yaml:"config,omitempty"`
-	Timeout string                 `yaml:"timeout,omitempty"` // e.g., "1m", "5m30s"
+	Image               string                 `yaml:"image"`
+	Config              map[string]interface{} `yaml:"config,omitempty"`
+	Timeout             string                 `yaml:"timeout,omitempty"` // e.g., "1m", "5m30s"
+	ServiceType         string                 `yaml:"service_type,omitempty"` // "llm_agent" or "tool_service"
+	ContainerStrategy   string                 `yaml:"container_strategy,omitempty"` // "fresh_per_call", "reuse_per_session", "smart_refresh"
+	MaxCallsPerContainer int                   `yaml:"max_calls_per_container,omitempty"` // For smart_refresh strategy
+	MaxContainerAge     string                 `yaml:"max_container_age,omitempty"` // For smart_refresh strategy
+	MemoryThreshold     string                 `yaml:"memory_threshold,omitempty"` // For smart_refresh strategy
 }
 
 // ClientContext holds the state for a single connected client session.
@@ -84,6 +89,19 @@ const (
 	ErrorInternalError            = -32603
 )
 
+// Service Types
+const (
+	ServiceTypeLLMAgent    = "llm_agent"
+	ServiceTypeToolService = "tool_service"
+)
+
+// Container Strategies
+const (
+	StrategyFreshPerCall     = "fresh_per_call"
+	StrategyReusePerSession  = "reuse_per_session" 
+	StrategySmartRefresh     = "smart_refresh"
+)
+
 // ClientSession represents an active client connection and session state
 type ClientSession struct {
 	ID            string
@@ -101,6 +119,8 @@ type ContainerInfo struct {
 	SessionID string
 	Image     string
 	StartTime time.Time
+	CallCount int       // Track number of tool calls handled
+	LastUsed  time.Time // Track last activity for smart refresh
 }
 
 // GenerateSessionID creates a unique session identifier

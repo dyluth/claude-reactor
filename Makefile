@@ -270,7 +270,15 @@ build-fabric: go-mod-tidy ## Build reactor-fabric binaries for all major archite
 	@echo "$(GREEN)✓ Reactor-fabric binaries built in dist/$(NC)"
 
 .PHONY: build-apps
-build-apps: build-reactor build-fabric ## Build both claude-reactor and reactor-fabric applications
+build-apps: build-reactor build-fabric build-test-client ## Build all applications
+
+.PHONY: build-test-client
+build-test-client: go-mod-tidy ## Build test client for reactor-fabric
+	@echo "$(BLUE)Building test-client binary...$(NC)"
+	@mkdir -p dist
+	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/test-client ./cmd/test-client
+	@echo "$(GREEN)✓ Test client built: dist/test-client$(NC)"
 
 .PHONY: install
 install: ## Install claude-reactor to system PATH using INSTALL script
