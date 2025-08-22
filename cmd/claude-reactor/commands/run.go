@@ -314,12 +314,11 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			return fmt.Errorf("failed to start or recover container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
 		
-		// Update session tracking
-		if config.ContainerID != containerID {
-			config.ContainerID = containerID
-			if err := app.ConfigMgr.SaveConfig(config); err != nil {
-				app.Logger.Warnf("Failed to save session container ID: %v", err)
-			}
+		// Update session tracking - save config after session persistence operations
+		// This ensures both session ID and container ID are persisted
+		config.ContainerID = containerID
+		if err := app.ConfigMgr.SaveConfig(config); err != nil {
+			app.Logger.Warnf("Failed to save session configuration: %v", err)
 		}
 	} else {
 		app.Logger.Info("🏗️ Starting ephemeral container...")
