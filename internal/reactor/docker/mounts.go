@@ -78,7 +78,19 @@ func (mm *MountManager) CreateDefaultMounts(account string) ([]pkg.Mount, error)
 		mm.logger.Debugf("Added Git config mount")
 	}
 	
-	// 5. Claude config mount (account-specific)
+	// 5. Claude-reactor config directory mount (required for account-specific configs)
+	claudeReactorDir := filepath.Join(os.Getenv("HOME"), ".claude-reactor")
+	if _, err := os.Stat(claudeReactorDir); err == nil {
+		mounts = append(mounts, pkg.Mount{
+			Source: claudeReactorDir,
+			Target: "/home/claude/.claude-reactor",
+			Type:   "bind",
+			ReadOnly: false,
+		})
+		mm.logger.Debugf("Added Claude-reactor config directory mount")
+	}
+	
+	// 6. Claude config mount (account-specific)
 	claudeMounts, err := mm.createClaudeConfigMounts(account)
 	if err != nil {
 		mm.logger.Warnf("Failed to create Claude config mounts: %v", err)
