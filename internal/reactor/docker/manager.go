@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"crypto/rand"
+	"math/big"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -204,6 +206,12 @@ func (m *manager) StartContainer(ctx context.Context, config *pkg.ContainerConfi
 	
 	m.logger.Infof("Successfully started container: %s (ID: %s)", config.Name, resp.ID[:12])
 	
+	// Ensure required directories exist in container
+	if err := m.ensureContainerDirectories(ctx, resp.ID); err != nil {
+		m.logger.Warnf("Failed to create container directories (non-fatal): %v", err)
+		// Don't fail container startup for directory creation issues
+	}
+	
 	// Run claude upgrade if requested and container has claude CLI
 	if config.RunClaudeUpgrade {
 		m.logger.Info("Running claude upgrade in container...")
@@ -245,6 +253,33 @@ func (m *manager) runClaudeUpgrade(ctx context.Context, containerID string) erro
 	}
 	
 	m.logger.Info("✅ Claude upgrade initiated in container")
+	return nil
+}
+
+// ensureContainerDirectories creates required directories in the container
+func (m *manager) ensureContainerDirectories(ctx context.Context, containerID string) error {
+	// Create .claude-reactor directory to prevent "Path not found" errors
+	// This directory is needed by Claude CLI for authentication and config operations
+	execConfig := container.ExecOptions{
+		Cmd:    []string{"mkdir", "-p", "/home/claude/.claude-reactor"},
+		Detach: false,
+	}
+	
+	// Create exec instance
+	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create directory creation exec: %w", err)
+	}
+	
+	// Start exec and wait for completion
+	err = m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{
+		Detach: false,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create directories: %w", err)
+	}
+	
+	m.logger.Debugf("✅ Created required directories in container")
 	return nil
 }
 
@@ -1198,5 +1233,119 @@ func (m *manager) GetClient() *client.Client {
 		return c
 	}
 	return nil
+}
+
+// StartOrRecoverContainer starts a new container or recovers an existing one based on session persistence
+func (m *manager) StartOrRecoverContainer(ctx context.Context, config *pkg.ContainerConfig, sessionConfig *pkg.Config) (string, error) {
+	// If session persistence is disabled, always start fresh
+	if !sessionConfig.SessionPersistence {
+		return m.StartContainer(ctx, config)
+	}
+
+	// Try to recover existing container
+	if sessionConfig.ContainerID != "" {
+		healthy, err := m.IsContainerHealthy(ctx, sessionConfig.ContainerID)
+		if err != nil {
+			m.logger.Warnf("Failed to check container health: %v", err)
+		} else if healthy {
+			// Safely truncate session ID for display
+			displaySessionID := sessionConfig.LastSessionID
+			if len(displaySessionID) > 8 {
+				displaySessionID = displaySessionID[:8]
+			}
+			m.logger.Infof("🔄 Recovering existing session: %s", displaySessionID)
+			return sessionConfig.ContainerID, nil
+		}
+		m.logger.Info("Previous container unhealthy, creating new one")
+	}
+
+	// Start new container
+	containerID, err := m.StartContainer(ctx, config)
+	if err != nil {
+		return "", err
+	}
+
+	// Generate new session ID and update config
+	sessionID, err := generateSessionID()
+	if err != nil {
+		m.logger.Warnf("Failed to generate session ID: %v", err)
+		sessionID = fmt.Sprintf("session-%d", time.Now().Unix())
+	}
+
+	sessionConfig.LastSessionID = sessionID
+	sessionConfig.ContainerID = containerID
+
+	// Safely truncate session ID for display
+	displaySessionID := sessionID
+	if len(displaySessionID) > 8 {
+		displaySessionID = displaySessionID[:8]
+	}
+	m.logger.Infof("💾 New session created: %s", displaySessionID)
+	return containerID, nil
+}
+
+// IsContainerHealthy checks if a container exists and is healthy for session recovery
+func (m *manager) IsContainerHealthy(ctx context.Context, containerID string) (bool, error) {
+	// Check if container exists and is running
+	containerInfo, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		// Container doesn't exist or can't be inspected
+		return false, nil
+	}
+
+	// Check if container is running
+	if !containerInfo.State.Running {
+		m.logger.Debug("Container exists but is not running")
+		return false, nil
+	}
+
+	// Check if container is responsive (simple health check)
+	// Try to execute a basic command to verify the container is responsive
+	execConfig := container.ExecOptions{
+		Cmd:          []string{"echo", "health-check"},
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		m.logger.Debug("Container exec create failed - container unhealthy")
+		return false, nil
+	}
+
+	execAttach, err := m.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		m.logger.Debug("Container exec attach failed - container unhealthy")
+		return false, nil
+	}
+	defer execAttach.Close()
+
+	// Start the exec with a timeout
+	execCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	err = m.client.ContainerExecStart(execCtx, execID.ID, container.ExecStartOptions{})
+	if err != nil {
+		m.logger.Debug("Container exec start failed - container unhealthy")
+		return false, nil
+	}
+
+	// Container is running and responsive
+	m.logger.Debug("Container health check passed")
+	return true, nil
+}
+
+// generateSessionID creates a unique session identifier
+func generateSessionID() (string, error) {
+	// Generate a random 16-character hex string
+	bytes := make([]byte, 8)
+	for i := range bytes {
+		n, err := rand.Int(rand.Reader, big.NewInt(256))
+		if err != nil {
+			return "", err
+		}
+		bytes[i] = byte(n.Int64())
+	}
+	return fmt.Sprintf("%x", bytes), nil
 }
 
