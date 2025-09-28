@@ -1,7 +1,8 @@
 # Claude-reactor project-specific configuration files
 .claude-reactor
-.claude-reactor-*-env
+./.claude-reactor-*-env
 claude-reactor
+!cmd/claude-reactor
 claude-reactor-*
 main
 
@@ -21,6 +22,7 @@ test-project/
 
 # Docker temporary files
 .claude.json.*
+dist*
 
 # macOS
 .DS_Store

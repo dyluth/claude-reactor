@@ -13,7 +13,7 @@ import (
 
 func TestNewAppContainer(t *testing.T) {
 	t.Run("successful initialization", func(t *testing.T) {
-		container, err := NewAppContainer()
+		container, err := NewAppContainer(false, false, "info")
 		
 		// Skip Docker-related assertions if Docker is not available
 		if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
@@ -41,7 +41,7 @@ func TestNewAppContainer(t *testing.T) {
 	})
 	
 	t.Run("components are properly connected", func(t *testing.T) {
-		container, err := NewAppContainer()
+		container, err := NewAppContainer(false, false, "info")
 		
 		// Skip Docker-related assertions if Docker is not available
 		if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
@@ -73,8 +73,8 @@ func TestNewAppContainer(t *testing.T) {
 	})
 	
 	t.Run("multiple container instances are independent", func(t *testing.T) {
-		container1, err1 := NewAppContainer()
-		container2, err2 := NewAppContainer()
+		container1, err1 := NewAppContainer(false, false, "info")
+		container2, err2 := NewAppContainer(false, false, "info")
 		
 		// Skip Docker-related assertions if Docker is not available
 		if (err1 != nil && strings.Contains(err1.Error(), "failed to connect to Docker daemon")) ||
@@ -98,7 +98,7 @@ func TestNewAppContainer(t *testing.T) {
 	})
 	
 	t.Run("dependency injection consistency", func(t *testing.T) {
-		container, err := NewAppContainer()
+		container, err := NewAppContainer(false, false, "info")
 		
 		// Skip Docker-related assertions if Docker is not available
 		if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
@@ -136,7 +136,7 @@ func TestNewAppContainer_DockerError(t *testing.T) {
 	// but this test ensures the behavior is consistent
 	
 	t.Run("handles docker initialization", func(t *testing.T) {
-		container, err := NewAppContainer()
+		container, err := NewAppContainer(false, false, "info")
 		
 		// Docker may not be available in all test environments
 		// The function should either succeed or fail gracefully
@@ -153,14 +153,14 @@ func TestNewAppContainer_DockerError(t *testing.T) {
 
 func BenchmarkNewAppContainer(b *testing.B) {
 	// Skip if Docker is not available
-	_, err := NewAppContainer()
+	_, err := NewAppContainer(false, false, "info")
 	if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
 		b.Skip("Docker daemon not available - skipping benchmark")
 	}
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		container, err := NewAppContainer()
+		container, err := NewAppContainer(false, false, "info")
 		if err != nil {
 			b.Fatalf("NewAppContainer failed: %v", err)
 		}
@@ -170,7 +170,7 @@ func BenchmarkNewAppContainer(b *testing.B) {
 
 // Test to ensure AppContainer satisfies the expected interface
 func TestAppContainerInterface(t *testing.T) {
-	container, err := NewAppContainer()
+	container, err := NewAppContainer(false, false, "info")
 	
 	// Skip Docker-related assertions if Docker is not available
 	if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {

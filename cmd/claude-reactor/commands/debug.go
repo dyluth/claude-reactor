@@ -3,6 +3,7 @@ package commands
 import (
 	"strings"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"claude-reactor/pkg"
@@ -42,6 +43,22 @@ claude-reactor debug cache info`,
 	}
 
 	debugCmd.AddCommand(
+		&cobra.Command{
+			Use:   "status",
+			Short: "Show debug status",
+			Long:  "Display current debug mode and logging configuration.",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.Printf("Debug Mode: %v\n", app.Debug)
+
+				// Try to get log level through interface or fallback
+				if logger, ok := app.Logger.(interface{ GetLevel() logrus.Level }); ok {
+					cmd.Printf("Log Level: %s\n", logger.GetLevel().String())
+				} else {
+					cmd.Printf("Log Level: unable to determine\n")
+				}
+				return nil
+			},
+		},
 		&cobra.Command{
 			Use:   "info",
 			Short: "Show system information",
