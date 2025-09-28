@@ -225,12 +225,20 @@ RUN apt-get update && apt-get install -y \
 # Install additional utilities
 RUN apt-get update && apt-get install -y \
     tree \
-    yq \
     rsync \
     openssl \
     netcat \
     telnet \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yq from GitHub releases (not available in apt)
+RUN YQ_VERSION="v4.47.2" && \
+    YQ_ARCH=$(dpkg --print-architecture) && \
+    if [ "$YQ_ARCH" = "amd64" ]; then YQ_ARCH="amd64"; \
+    elif [ "$YQ_ARCH" = "arm64" ]; then YQ_ARCH="arm64"; \
+    else YQ_ARCH="amd64"; fi && \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${YQ_ARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
 
 # Copy Rust toolchain to system path
 RUN cp /root/.cargo/bin/cargo* /usr/local/bin/ 2>/dev/null || true && \
