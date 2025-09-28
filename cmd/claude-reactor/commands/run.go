@@ -70,7 +70,7 @@ Related Commands:
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
 	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
 	runCmd.Flags().BoolP("no-mounts", "", false, "Skip mounting directories (for testing)")
-	
+
 	// Registry flags (Phase 0.1)
 	runCmd.Flags().BoolP("dev", "", false, "Force local build (disable registry pulls)")
 	runCmd.Flags().BoolP("registry-off", "", false, "Disable registry completely")
@@ -83,7 +83,7 @@ Related Commands:
 // RunContainer handles the main container execution logic
 func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	ctx := cmd.Context()
-	
+
 	// Parse command flags
 	image, _ := cmd.Flags().GetString("image")
 	account, _ := cmd.Flags().GetString("account")
@@ -93,27 +93,26 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	shell, _ := cmd.Flags().GetBool("shell")
 	mounts, _ := cmd.Flags().GetStringSlice("mount")
 	noPersist, _ := cmd.Flags().GetBool("no-persist")
-	persist := !noPersist  // Default to true, unless --no-persist is specified
+	persist := !noPersist // Default to true, unless --no-persist is specified
 	noMounts, _ := cmd.Flags().GetBool("no-mounts")
-	
+
 	// Registry flags (Phase 0.1)
 	devMode, _ := cmd.Flags().GetBool("dev")
 	registryOff, _ := cmd.Flags().GetBool("registry-off")
 	pullLatest, _ := cmd.Flags().GetBool("pull-latest")
-	
+
 	// Conversation control (Phase 0.3)
 	noContinue, _ := cmd.Flags().GetBool("no-continue")
-	continueConversation := !noContinue  // Default to true, unless --no-continue is specified
 
 	app.Logger.Info("🚀 Starting Claude CLI container...")
-	
+
 	// Step 1: Load or create configuration
 	app.Logger.Info("📋 Loading configuration...")
 	config, err := app.ConfigMgr.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w. Try running 'claude-reactor config validate' to check your setup", err)
 	}
-	
+
 	// Override config with command-line flags
 	if image != "" {
 		config.Variant = image
@@ -121,7 +120,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if account != "" {
 		config.Account = account
 	}
-	
+
 	// Handle danger mode with persistence logic
 	// Only override if the flag was explicitly set
 	if cmd.Flags().Changed("danger") {
@@ -134,7 +133,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	} else if config.DangerMode {
 		app.Logger.Info("🔥 Using persistent danger mode setting")
 	}
-	
+
 	// Handle authentication flags
 	if apikey != "" {
 		app.Logger.Infof("🔑 Setting up API key for account: %s", config.Account)
@@ -143,13 +142,13 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 		app.Logger.Info("✅ API key authentication configured")
 	}
-	
+
 	if interactiveLogin {
 		app.Logger.Infof("🔐 Forcing interactive login for account: %s", config.Account)
 		// Note: Interactive login is handled by the Claude CLI inside the container
 		// This flag will be passed to the container startup
 	}
-	
+
 	// Auto-detect variant if not specified
 	if config.Variant == "" {
 		app.Logger.Info("🔍 Auto-detecting project type...")
@@ -163,23 +162,23 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			app.Logger.Infof("✅ Auto-detected image: %s", config.Variant)
 		}
 	}
-	
+
 	// Validate configuration
 	app.Logger.Info("✅ Validating configuration...")
 	if err := app.ConfigMgr.ValidateConfig(config); err != nil {
 		return fmt.Errorf("invalid configuration: %w. Try using --image with one of: base, go, full, cloud, k8s, or a custom Docker image", err)
 	}
-	
+
 	// Session persistence: respect saved configuration
 	// The user has explicitly configured session_persistence=true, so honor it
 	// (Session persistence setting is already loaded from configuration above)
-	
+
 	// Save configuration to persist user preferences (including danger mode and session persistence)
 	if err := app.ConfigMgr.SaveConfig(config); err != nil {
 		app.Logger.Warnf("Failed to save configuration: %v", err)
 		// Don't fail the entire operation for this, just warn
 	}
-	
+
 	// Step 1.5: Validate custom Docker images
 	builtinVariants := []string{"base", "go", "full", "cloud", "k8s"}
 	isBuiltinVariant := false
@@ -189,16 +188,16 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			break
 		}
 	}
-	
+
 	if !isBuiltinVariant {
 		app.Logger.Infof("🔍 Validating custom Docker image: %s (compatibility + package analysis)", config.Variant)
-		
+
 		// Pull image if needed and validate it
 		validationResult, err := app.ImageValidator.ValidateImage(ctx, config.Variant, true)
 		if err != nil {
 			return fmt.Errorf("failed to validate custom image '%s': %w. Ensure the image exists and is accessible", config.Variant, err)
 		}
-		
+
 		if !validationResult.Compatible {
 			app.Logger.Error("❌ Custom image validation failed:")
 			for _, errMsg := range validationResult.Errors {
@@ -206,7 +205,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			}
 			return fmt.Errorf("custom image '%s' is not compatible with claude-reactor. See errors above", config.Variant)
 		}
-		
+
 		// Show warnings if any
 		if len(validationResult.Warnings) > 0 {
 			app.Logger.Warn("⚠️ Custom image warnings:")
@@ -214,14 +213,14 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 				app.Logger.Warnf("  - %s", warning)
 			}
 		}
-		
-		app.Logger.Infof("✅ Custom image validated successfully: %s (digest: %.12s)", 
+
+		app.Logger.Infof("✅ Custom image validated successfully: %s (digest: %.12s)",
 			config.Variant, validationResult.Digest)
-		
+
 		if validationResult.HasClaude {
 			app.Logger.Debug("✅ Claude CLI detected in custom image")
 		}
-		
+
 		// Show package information if available
 		if packages, ok := validationResult.Metadata["packages"].(map[string]interface{}); ok {
 			if totalAvailable, ok := packages["total_available"].(int); ok {
@@ -231,7 +230,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			}
 		}
 	}
-	
+
 	// Log registry configuration if relevant
 	if devMode {
 		app.Logger.Info("🔨 Registry: Dev mode enabled - forcing local builds")
@@ -240,46 +239,46 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	} else if pullLatest {
 		app.Logger.Info("📦 Registry: Force pulling latest images from registry")
 	}
-	
+
 	if config.SessionPersistence {
-		app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t, session_persistence=%t", 
+		app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t, session_persistence=%t",
 			config.Variant, config.Account, config.DangerMode, shell, persist, config.SessionPersistence)
 	} else {
-		app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t", 
+		app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t",
 			config.Variant, config.Account, config.DangerMode, shell, persist)
 	}
-	
+
 	// Show which Claude config file will be mounted
 	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(config.Account)
 	app.Logger.Infof("🔑 Claude config: %s", claudeConfigPath)
-	
+
 	// Step 2: Generate container and image names
 	app.Logger.Info("🔧 Detecting system architecture...")
 	arch, err := app.ArchDetector.GetHostArchitecture()
 	if err != nil {
 		return fmt.Errorf("failed to detect architecture: %w. Your system may not be supported", err)
 	}
-	
+
 	containerName := app.DockerMgr.GenerateContainerName("", config.Variant, arch, config.Account)
 	app.Logger.Infof("🏷️ Container name: %s", containerName)
-	
+
 	// Step 3: Build image if needed
 	app.Logger.Info("🐳 Preparing Docker environment...")
 	platform, err := app.ArchDetector.GetDockerPlatform()
 	if err != nil {
 		return fmt.Errorf("failed to get Docker platform: %w. Architecture detection failed", err)
 	}
-	
+
 	imageName := app.DockerMgr.GetImageName(config.Variant, arch)
 	app.Logger.Infof("🔨 Building image if needed: %s", imageName)
 	app.Logger.Info("⏳ This may take a few minutes for first-time setup...")
-	
+
 	// Build image with registry support (Phase 0.1)
 	err = app.DockerMgr.BuildImageWithRegistry(ctx, config.Variant, platform, devMode, registryOff, pullLatest)
 	if err != nil {
 		return fmt.Errorf("failed to build image: %w. Try running 'docker system prune' to free space or check your Dockerfile", err)
 	}
-	
+
 	// Step 4: Create container configuration
 	containerConfig := &pkg.ContainerConfig{
 		Image:            imageName,
@@ -291,7 +290,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		Remove:           false, // Don't auto-remove - we manage lifecycle
 		RunClaudeUpgrade: true,  // Run claude upgrade after container startup
 	}
-	
+
 	// Add mounts (skip if requested for testing)
 	if !noMounts {
 		app.Logger.Info("📁 Configuring container mounts...")
@@ -304,7 +303,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		// Set empty mounts to prevent default mount creation
 		containerConfig.Mounts = []pkg.Mount{}
 	}
-	
+
 	// Step 5: Start or recover container with session persistence
 	var containerID string
 	if config.SessionPersistence {
@@ -313,7 +312,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		if err != nil {
 			return fmt.Errorf("failed to start or recover container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
-		
+
 		// Update session tracking - save config after session persistence operations
 		// This ensures both session ID and container ID are persisted
 		config.ContainerID = containerID
@@ -327,9 +326,9 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
 	}
-	
+
 	app.Logger.Info("✅ Container started successfully!")
-	
+
 	// Step 6: Attach to container
 	var command []string
 	if shell {
@@ -339,7 +338,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	} else {
 		// Build Claude CLI command with flags
 		command = []string{"claude"}
-		
+
 		if config.DangerMode {
 			command = append(command, "--dangerously-skip-permissions")
 			app.Logger.Info("🤖 Launching Claude CLI in DANGER MODE...")
@@ -347,22 +346,26 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		} else {
 			app.Logger.Info("🤖 Launching Claude CLI in container...")
 		}
-		
+
 		// Conversation control (Phase 0.3)
-		if !continueConversation {
-			command = append(command, "--no-conversation-continuation")
+		if noContinue {
 			app.Logger.Info("💬 Conversation continuation disabled")
 		} else {
+			command = append(command, "--continue")
 			app.Logger.Debug("💬 Conversation continuation enabled (default)")
 		}
+		if app.Debug {
+			command = append(command, "-d", "--verbose")
+		}
+
 	}
-	
+
 	// Attach to container
 	err = app.DockerMgr.AttachToContainer(ctx, containerName, command, true)
 	if err != nil {
 		return fmt.Errorf("failed to attach to container: %w. Try using 'docker exec -it %s %s' as fallback", err, containerName, strings.Join(command, " "))
 	}
-	
+
 	// Step 7: Handle container persistence
 	if !persist {
 		app.Logger.Info("🧹 Stopping container due to --persist=false...")
@@ -372,7 +375,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	} else {
 		app.Logger.Info("💾 Container will remain running (use 'claude-reactor clean' to stop)")
 	}
-	
+
 	return nil
 }
 
@@ -383,23 +386,23 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
-	
+
 	// Project mount - avoid circular mount if we're already in /app
 	targetPath := "/app"
 	if projectDir == "/app" {
-		targetPath = "/workspace"  // Use different path to avoid circular mount
+		targetPath = "/workspace" // Use different path to avoid circular mount
 	}
-	
+
 	err = app.MountMgr.AddMountToConfig(containerConfig, projectDir, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to add project mount: %w", err)
 	}
 	app.Logger.Infof("📁 Project mount: %s -> %s", projectDir, targetPath)
-	
+
 	// Claude session directory mount - use account-specific session directory
 	// This ensures all accounts (including default) use isolated ~/.claude-reactor/[account]/ directories
 	claudeSessionDir := app.AuthMgr.GetAccountSessionDir(account)
-	
+
 	// Only mount if session directory exists, or create it if needed
 	if err := os.MkdirAll(claudeSessionDir, 0755); err != nil {
 		app.Logger.Warnf("Failed to create Claude session directory: %v", err)
@@ -411,23 +414,23 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 			app.Logger.Infof("📁 Claude session mount: %s -> /home/claude/.claude", claudeSessionDir)
 		}
 	}
-	
+
 	// Add user-specified mounts
 	for _, mountPath := range userMounts {
 		validatedPath, err := app.MountMgr.ValidateMountPath(mountPath)
 		if err != nil {
 			return fmt.Errorf("invalid mount path '%s': %w", mountPath, err)
 		}
-		
+
 		// Generate target path (mount to /mnt/basename)
 		targetPath := "/mnt/" + filepath.Base(validatedPath)
 		err = app.MountMgr.AddMountToConfig(containerConfig, validatedPath, targetPath)
 		if err != nil {
 			return fmt.Errorf("failed to add user mount '%s': %w", mountPath, err)
 		}
-		
+
 		app.Logger.Infof("📁 Added mount: %s -> %s", validatedPath, targetPath)
 	}
-	
+
 	return nil
 }

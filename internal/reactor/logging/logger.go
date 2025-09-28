@@ -40,6 +40,38 @@ func NewLogger() pkg.Logger {
 	return NewLoggerWithLevel(level)
 }
 
+// NewLoggerWithFlags creates a new logger with explicit flag settings
+func NewLoggerWithFlags(debug bool, verbose bool, logLevel string) pkg.Logger {
+	// Determine the log level from flags
+	var level logrus.Level
+
+	// Debug flag overrides everything and sets debug level
+	if debug {
+		level = logrus.DebugLevel
+	} else if verbose {
+		level = logrus.InfoLevel // Verbose keeps info but enables more output
+	} else {
+		// Parse the explicit log level
+		switch strings.ToUpper(logLevel) {
+		case "DEBUG":
+			level = logrus.DebugLevel
+		case "INFO":
+			level = logrus.InfoLevel
+		case "WARN", "WARNING":
+			level = logrus.WarnLevel
+		case "ERROR":
+			level = logrus.ErrorLevel
+		case "FATAL":
+			level = logrus.FatalLevel
+		default:
+			// Check environment variable as fallback
+			level = getLogLevel()
+		}
+	}
+
+	return NewLoggerWithLevel(level)
+}
+
 // getLogLevel determines the appropriate log level from environment variables
 func getLogLevel() logrus.Level {
 	// Check for CLAUDE_REACTOR_LOG_LEVEL environment variable
@@ -126,4 +158,9 @@ func (l *logger) Errorf(format string, args ...interface{}) {
 // Fatalf logs a formatted fatal message and exits
 func (l *logger) Fatalf(format string, args ...interface{}) {
 	l.Logger.Fatalf(format, args...)
+}
+
+// GetLevel returns the current log level
+func (l *logger) GetLevel() logrus.Level {
+	return l.Logger.GetLevel()
 }
