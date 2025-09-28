@@ -14,27 +14,65 @@ Claude-Reactor transforms the basic Claude CLI into a comprehensive development 
 - **Custom Images**: Support for custom Docker images with compatibility validation
 - **VS Code Integration**: Automatic dev container generation with project-specific extensions
 
-## Quick Start
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dyluth/claude-reactor/main/install.sh | bash
+```
+
+The installer will:
+- Auto-detect your platform (Linux/macOS, x86_64/ARM64)
+- Download the latest binary with checksum verification
+- Install to `~/.local/bin/claude-reactor`
+- Check for Docker dependency
+
+### Manual Installation
+
+1. **Download Binary**: Get the latest release for your platform from [GitHub Releases](https://github.com/dyluth/claude-reactor/releases)
+
+2. **Install Binary**:
+   ```bash
+   # Download (replace with your platform)
+   curl -fsSL -O https://github.com/dyluth/claude-reactor/releases/download/v0.1.0/claude-reactor-v0.1.0-linux-amd64
+
+   # Make executable and install
+   chmod +x claude-reactor-v0.1.0-linux-amd64
+   mv claude-reactor-v0.1.0-linux-amd64 ~/.local/bin/claude-reactor
+
+   # Add to PATH (if needed)
+   export PATH="$PATH:$HOME/.local/bin"
+   ```
+
+3. **Verify Installation**:
+   ```bash
+   claude-reactor --version
+   ```
 
 ### Prerequisites
 
-- Docker Desktop installed and running
-- Claude-reactor binary (see Installation section below)
+- **Docker**: Required for container functionality
+  - Install from [docker.com](https://docs.docker.com/get-docker/)
+  - Ensure Docker daemon is running
+- **Platform**: Linux or macOS (x86_64 or ARM64)
+
+## Quick Start
 
 ### Basic Usage
 
 ```bash
 # Start Claude CLI (auto-detects project type and creates appropriate container)
-./claude-reactor
+claude-reactor
 
 # Use specific container images
-./claude-reactor run --image go           # Go development tools
-./claude-reactor run --image full         # Go + Rust + Java + databases
-./claude-reactor run --image cloud        # Full + AWS/GCP/Azure CLIs
-./claude-reactor run --image k8s          # Full + enhanced Kubernetes tools
+claude-reactor run --image go           # Go development tools
+claude-reactor run --image full         # Go + Rust + Java + databases
+claude-reactor run --image cloud        # Full + AWS/GCP/Azure CLIs
+claude-reactor run --image k8s          # Full + enhanced Kubernetes tools
 
 # Use custom Docker image
-./claude-reactor run --image python:3.11  # Custom Python image (with validation)
+claude-reactor run --image python:3.11  # Custom Python image (with validation)
 ```
 
 ### Account Management
@@ -43,16 +81,16 @@ Claude-Reactor provides complete account isolation for teams and personal use:
 
 ```bash
 # Default account (uses ~/.claude.json)
-./claude-reactor                      
+claude-reactor
 
 # Work account (isolated config and containers)
-./claude-reactor run --account work      
+claude-reactor run --account work      
 
-# Personal account 
-./claude-reactor run --account personal  
+# Personal account
+claude-reactor run --account personal  
 
 # Check current configuration
-./claude-reactor config show
+claude-reactor config show
 ```
 
 **Account-Specific Files:**

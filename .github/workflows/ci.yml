@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main, to-go ]
+  push:
+    branches: [ main, to-go ]
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install Docker
+      run: |
+        # Docker is typically pre-installed on GitHub runners
+        docker --version
+
+    - name: Run full CI test suite
+      run: make ci-full
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: |
+          tests/results/
+          coverage.out
+          coverage.html
+        retention-days: 30
+
+  # TODO: Add matrix testing for multiple OS when ready
+  # test-matrix:
+  #   name: Test Matrix
+  #   strategy:
+  #     matrix:
+  #       os: [ubuntu-latest, macos-latest, windows-latest]
+  #   runs-on: ${{ matrix.os }}
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v5
+  #       with:
+  #         go-version: ${{ env.GO_VERSION }}
+  #     - name: Run tests
+  #       run: make test-unit
