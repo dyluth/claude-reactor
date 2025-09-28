@@ -168,7 +168,7 @@ build-extended: build-all build-cloud build-k8s ## Build all container variants 
 .PHONY: test-go-unit
 test-go-unit: ## Run Go unit tests
 	@echo "$(BLUE)Running Go unit tests...$(NC)"
-	@go test -v ./internal/... ./pkg/... ./cmd/...
+	@go test -v ./internal/... ./pkg/... ./cmd/... || (echo "$(RED)✗ Go unit tests failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Go unit tests completed$(NC)"
 
 .PHONY: test-go-integration
