@@ -1,0 +1,1095 @@
+#!/usr/bin/env bash
+#
+# claude-reactor: A wrapper script to manage and connect to the interactive Claude Docker environment.
+#
+# This script intelligently handles the container lifecycle:
+# - Builds the image if it doesn't exist (must be run from the project root for the first build).
+# - Starts the container if it's stopped.
+# - Attaches to the container if it's already running.
+# - Creates the container on its first run.
+# - Handles authentication by preferring an API key but allowing an interactive override.
+
+set -e
+
+# --- Script Variables ---
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+VERBOSE=false
+
+# --- Configuration ---
+BASE_IMAGE_NAME="claude-reactor"
+BASE_CONTAINER_NAME="claude-reactor"
+CONFIG_FILE=".claude-reactor"
+
+# Registry configuration
+DEFAULT_REGISTRY="ghcr.io/dyluth/claude-reactor"
+CLAUDE_REACTOR_REGISTRY="${CLAUDE_REACTOR_REGISTRY:-$DEFAULT_REGISTRY}"
+CLAUDE_REACTOR_USE_REGISTRY="${CLAUDE_REACTOR_USE_REGISTRY:-true}"
+CLAUDE_REACTOR_TAG="${CLAUDE_REACTOR_TAG:-latest}"
+
+# --- Architecture Detection Functions ---
+detect_architecture() {
+    local arch_raw=$(uname -m)
+    case "$arch_raw" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        arm64|aarch64)
+            echo "arm64"
+            ;;
+        *)
+            log_error "Unsupported architecture: $arch_raw"
+            log_error "Supported architectures: x86_64, amd64, arm64, aarch64"
+            return 1
+            ;;
+    esac
+}
+
+get_docker_platform() {
+    local arch=$(detect_architecture)
+    case "$arch" in
+        amd64)
+            echo "linux/amd64"
+            ;;
+        arm64)
+            echo "linux/arm64"
+            ;;
+        *)
+            log_error "Cannot determine Docker platform for architecture: $arch"
+            return 1
+            ;;
+    esac
+}
+
+
+# --- Helper Functions ---
+show_usage() {
+    cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS]
+
+A wrapper script to manage and connect to the interactive Claude Docker environment.
+
+OPTIONS:
+    --variant VARIANT     Set container variant (base, go, full, cloud, k8s)
+    --account ACCOUNT     Set Claude account for this folder (creates isolated authentication)
+    --apikey APIKEY       Set API key for current account (saves to project-specific file)
+    --mount PATH          Mount additional directory to /mnt/basename (can be used multiple times)
+    --list-accounts       Show available Claude accounts
+    --list-variants       Show available variants
+    --show-config         Show current configuration
+    --interactive-login   Force interactive UI login instead of API key
+    --rebuild             Force rebuild of Docker image
+    --clean               Remove current project/account container and start fresh
+    --clean-all           Remove ALL claude-reactor containers
+    --danger              Launch Claude CLI with --dangerously-skip-permissions
+    --shell               Launch bash shell instead of Claude CLI directly
+    --dev                 Force local build (disable registry pulls)
+    --registry-off        Disable registry completely
+    --pull-latest         Force pull latest from registry
+    --continue [true|false]  Enable/disable conversation continuation (default: true)
+    --install             Install claude-reactor to /usr/local/bin (requires sudo)
+    --uninstall           Remove claude-reactor from /usr/local/bin (requires sudo)
+    --verbose, -v         Enable verbose output
+    --help, -h            Show this help message
+
+EXAMPLES:
+    # Basic usage
+    $SCRIPT_NAME                         # Launch Claude CLI directly (uses saved config)
+    $SCRIPT_NAME --variant go            # Use Go variant and save preference
+    
+    # Account management (creates isolated authentication)
+    $SCRIPT_NAME --account work          # Use 'work' account for this folder
+    $SCRIPT_NAME --account personal      # Use 'personal' account for this folder
+    $SCRIPT_NAME --account work --apikey sk-ant-xxx # Set API key for work account
+    $SCRIPT_NAME --mount ~/Documents     # Mount ~/Documents to /mnt/Documents
+    $SCRIPT_NAME --mount /tmp --mount ~/src # Mount multiple directories
+    $SCRIPT_NAME --shell                 # Launch bash shell instead of Claude CLI
+    $SCRIPT_NAME --danger                # Launch Claude CLI with --dangerously-skip-permissions
+    $SCRIPT_NAME --variant full --danger # Use full variant with danger mode
+    $SCRIPT_NAME --list-variants         # Show available variants
+    $SCRIPT_NAME --list-accounts         # Show available Claude accounts
+    $SCRIPT_NAME --show-config           # Show current configuration
+    $SCRIPT_NAME --rebuild               # Force rebuild current variant
+    $SCRIPT_NAME --clean                 # Remove current container and start fresh
+    $SCRIPT_NAME --clean-all             # Remove ALL claude-reactor containers
+    $SCRIPT_NAME --dev                   # Force local build (disable registry)
+    $SCRIPT_NAME --registry-off          # Disable registry completely
+    $SCRIPT_NAME --pull-latest           # Force pull latest from registry
+    $SCRIPT_NAME --continue false        # Disable conversation continuation
+    $SCRIPT_NAME --install               # Install to PATH
+
+ACCOUNT BEHAVIOR:
+    - No account specified: Uses 'default' account (~/.claude-reactor/.default-claude.json)
+    - Account specified: Creates isolated config (~/.claude-reactor/.ACCOUNT-claude.json)
+    - Each account gets separate containers: claude-reactor-*-ACCOUNT
+    - First-time setup: Auto-copies from main ~/.claude.json file
+
+EOF
+}
+
+log_verbose() {
+    if [ "$VERBOSE" = true ]; then
+        echo "[VERBOSE] $1"
+    fi
+}
+
+log_info() {
+    echo "$1"
+}
+
+log_error() {
+    echo "Error: $1" >&2
+}
+
+log_warning() {
+    echo "Warning: $1" >&2
+}
+
+# --- API Key Management Functions ---
+save_api_key() {
+    local account_id="$1"
+    local api_key="$2"
+    
+    if [ -z "$account_id" ]; then
+        local env_file=".claude-reactor-env"
+    else
+        local env_file=".claude-reactor-${account_id}-env"
+    fi
+    
+    echo "ANTHROPIC_API_KEY=$api_key" > "$env_file"
+    chmod 600 "$env_file"
+    
+    log_info "API key saved to $env_file"
+    log_verbose "Saved API key for account: ${account_id:-default}"
+}
+
+get_api_key_file() {
+    local account_id="$1"
+    
+    if [ -z "$account_id" ]; then
+        local env_file=".claude-reactor-env"
+    else
+        local env_file=".claude-reactor-${account_id}-env"
+    fi
+    
+    echo "$env_file"
+}
+
+get_claude_account_dir() {
+    local account_id="$1"
+    if [ -n "$account_id" ] && [ "$account_id" != "default" ]; then
+        echo "${HOME}/.claude-reactor/${account_id}"
+    else
+        # For default account, use main Claude directories (no isolation)
+        echo ""
+    fi
+}
+
+update_claude_settings_for_mounts() {
+    # Only update settings if we have mount paths
+    if [ ${#MOUNT_PATHS[@]} -eq 0 ]; then
+        log_verbose "No mount paths to configure"
+        return
+    fi
+    
+    local settings_file=".claude/settings.local.json"
+    local claude_dir=".claude"
+    
+    # Create .claude directory if it doesn't exist
+    mkdir -p "$claude_dir"
+    
+    # Build array of mount paths as they appear in container
+    local mount_dirs=()
+    for mount_path in "${MOUNT_PATHS[@]}"; do
+        local basename=$(basename "$mount_path")
+        mount_dirs+=("/mnt/$basename")
+    done
+    
+    # Read existing settings or create empty object
+    local existing_settings="{}"
+    if [ -f "$settings_file" ]; then
+        if command -v jq >/dev/null 2>&1 && jq empty "$settings_file" >/dev/null 2>&1; then
+            existing_settings=$(cat "$settings_file")
+            log_verbose "Read existing Claude settings from $settings_file"
+        else
+            log_verbose "Existing settings file has invalid JSON, creating new one"
+        fi
+    fi
+    
+    # Build new additionalDirectories array (preserve existing + add mounts)
+    local existing_dirs=""
+    if command -v jq >/dev/null 2>&1; then
+        # Get existing additionalDirectories, default to empty array if not present
+        existing_dirs=$(echo "$existing_settings" | jq -r '.additionalDirectories // [] | @json' 2>/dev/null || echo "[]")
+        
+        # Create JSON array of mount directories
+        local mount_dirs_json=$(printf '%s\n' "${mount_dirs[@]}" | jq -R . | jq -s .)
+        
+        # Merge existing and new directories, removing duplicates
+        local combined_dirs=$(echo "$existing_dirs $mount_dirs_json" | jq -s 'add | unique')
+        
+        # Update settings with merged directories, preserving all other settings
+        local updated_settings=$(echo "$existing_settings" | jq --argjson dirs "$combined_dirs" '.additionalDirectories = $dirs')
+        
+        # Write updated settings
+        echo "$updated_settings" | jq . > "$settings_file"
+        
+        local mount_count=${#mount_dirs[@]}
+        log_info "📁 Updated Claude settings with $mount_count mounted director$([ $mount_count -eq 1 ] && echo "y" || echo "ies")"
+        log_verbose "Mount directories: ${mount_dirs[*]}"
+        log_verbose "Settings file: $settings_file"
+    else
+        log_warning "jq not found, cannot update Claude settings file"
+        log_verbose "Install jq to automatically configure mounted directories for Claude"
+    fi
+}
+
+# --- Configuration Functions ---
+save_config() {
+    local variant="$1"
+    local danger_mode="$2"
+    local account_id="$3"
+    
+    {
+        echo "variant=$variant"
+        if [ "$danger_mode" = true ]; then
+            echo "danger=true"
+        fi
+        if [ -n "$account_id" ]; then
+            echo "account=$account_id"
+        fi
+    } > "$CONFIG_FILE"
+    
+    log_verbose "Saved configuration: variant=$variant, danger=$danger_mode, account=$account_id"
+}
+
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        log_verbose "Loading configuration from $CONFIG_FILE"
+        
+        # Load variant
+        SAVED_VARIANT=$(grep "^variant=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        
+        # Load danger setting
+        SAVED_DANGER=$(grep "^danger=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$SAVED_DANGER" = "true" ]; then
+            SAVED_DANGER=true
+        else
+            SAVED_DANGER=false
+        fi
+        
+        # Load account setting
+        SAVED_ACCOUNT=$(grep "^account=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        
+        log_verbose "Loaded: variant=$SAVED_VARIANT, danger=$SAVED_DANGER, account=$SAVED_ACCOUNT"
+    else
+        log_verbose "No configuration file found"
+        SAVED_VARIANT=""
+        SAVED_DANGER=false
+        SAVED_ACCOUNT=""
+    fi
+}
+
+auto_detect_variant() {
+    log_verbose "Auto-detecting project variant..."
+    
+    if [ -f "go.mod" ] || [ -f "go.sum" ]; then
+        echo "go"
+    elif [ -f "Cargo.toml" ] || [ -f "Cargo.lock" ]; then
+        echo "full"  # Rust needs full environment
+    elif [ -f "pom.xml" ] || [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+        echo "full"  # Java needs full environment
+    elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "Pipfile" ]; then
+        echo "base"  # Python already in base
+    elif [ -f "package.json" ]; then
+        echo "base"  # Node.js already in base
+    else
+        echo "base"  # Default fallback
+    fi
+}
+
+determine_variant() {
+    if [ -n "$EXPLICIT_VARIANT" ]; then
+        echo "$EXPLICIT_VARIANT"
+    elif [ -n "$SAVED_VARIANT" ]; then
+        log_verbose "Using saved variant: $SAVED_VARIANT"
+        echo "$SAVED_VARIANT"
+    else
+        local detected=$(auto_detect_variant)
+        log_verbose "Auto-detected variant: $detected"
+        echo "$detected"
+    fi
+}
+
+validate_variant() {
+    local variant="$1"
+    case "$variant" in
+        base|go|full|cloud|k8s)
+            return 0
+            ;;
+        *)
+            log_error "Invalid variant: $variant"
+            log_error "Available variants: base, go, full, cloud, k8s"
+            return 1
+            ;;
+    esac
+}
+
+show_variants() {
+    cat << EOF
+Available container variants:
+
+  base   - Node.js, Python, basic development tools (smallest)
+  go     - Base + Go toolchain and utilities
+  full   - Go + Rust, Java, database clients
+  cloud  - Full + AWS/GCP/Azure CLIs
+  k8s    - Full + Enhanced Kubernetes tools (helm, k9s)
+
+Current configuration:
+EOF
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" | sed 's/^/  /'
+    else
+        echo "  No saved configuration (will auto-detect)"
+    fi
+}
+
+show_accounts() {
+    echo "Available Claude accounts:"
+    echo ""
+    
+    # Look for Claude config files in home directory
+    local found_configs=false
+    
+    # Check for default account
+    if [ -f "${HOME}/.claude.json" ]; then
+        echo "  default - ${HOME}/.claude.json"
+        found_configs=true
+    fi
+    
+    # Check for account-specific configs
+    for config_file in "${HOME}"/.claude.*.json; do
+        if [ -f "$config_file" ]; then
+            local account_name=$(basename "$config_file" .json | sed 's/^\.claude\.//')
+            echo "  $account_name - $config_file"
+            found_configs=true
+        fi
+    done
+    
+    if [ "$found_configs" = false ]; then
+        echo "  No Claude account configurations found"
+        echo "  Login with Claude CLI to create account configs"
+    fi
+    
+    echo ""
+    echo "Current folder configuration:"
+    if [ -f "$CONFIG_FILE" ]; then
+        local current_account=$(grep "^account=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        echo "  Account: ${current_account:-default}"
+    else
+        echo "  Account: default (not configured)"
+    fi
+}
+
+show_current_config() {
+    load_config
+    local variant=$(determine_variant)
+    
+    echo "Current configuration:"
+    echo "  Variant: $variant"
+    echo "  Danger mode: ${SAVED_DANGER:-false}"
+    echo "  Account: ${SAVED_ACCOUNT:-default}"
+    echo "  Config file: $CONFIG_FILE"
+    echo ""
+    echo "Registry configuration:"
+    echo "  Registry: $CLAUDE_REACTOR_REGISTRY"
+    echo "  Use registry: $CLAUDE_REACTOR_USE_REGISTRY"
+    echo "  Tag: $CLAUDE_REACTOR_TAG"
+    echo "  Dev mode: ${DEV_MODE:-false}"
+    echo "  Registry disabled: ${REGISTRY_OFF:-false}"
+    echo "  Continue mode: ${CONTINUE_MODE:-true}"
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        echo ""
+        echo "Project configuration:"
+        echo "  Status: Configuration saved"
+        echo ""
+        echo "Raw config file:"
+        cat "$CONFIG_FILE" | sed 's/^/    /'
+    else
+        echo ""
+        echo "Project configuration:"
+        echo "  Status: No saved configuration (auto-detecting)"
+        echo "  Auto-detected: $(auto_detect_variant)"
+    fi
+}
+
+# --- Argument Parsing ---
+REBUILD=false
+CLEAN=false
+CLEAN_ALL=false
+INTERACTIVE_LOGIN=false
+DANGER_MODE=false
+SHELL_MODE=false
+INSTALL=false
+UNINSTALL=false
+DEV_MODE=false
+REGISTRY_OFF=false
+PULL_LATEST=false
+CONTINUE_MODE=true  # Default to true for conversation continuation
+EXPLICIT_VARIANT=""
+EXPLICIT_ACCOUNT=""
+EXPLICIT_APIKEY=""
+SHOW_VARIANTS=false
+SHOW_ACCOUNTS=false
+SHOW_CONFIG=false
+MOUNT_PATHS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        --variant)
+            if [[ -z "$2" ]]; then
+                log_error "--variant requires a value"
+                exit 1
+            fi
+            EXPLICIT_VARIANT="$2"
+            shift 2
+            ;;
+        --account)
+            if [[ -z "$2" ]]; then
+                log_error "--account requires a value"
+                exit 1
+            fi
+            EXPLICIT_ACCOUNT="$2"
+            shift 2
+            ;;
+        --apikey)
+            if [[ -z "$2" ]]; then
+                log_error "--apikey requires a value"
+                exit 1
+            fi
+            EXPLICIT_APIKEY="$2"
+            shift 2
+            ;;
+        --mount)
+            if [[ -z "$2" ]]; then
+                log_error "--mount requires a path"
+                exit 1
+            fi
+            MOUNT_PATHS+=("$2")
+            shift 2
+            ;;
+        --list-variants)
+            SHOW_VARIANTS=true
+            shift
+            ;;
+        --list-accounts)
+            SHOW_ACCOUNTS=true
+            shift
+            ;;
+        --show-config)
+            SHOW_CONFIG=true
+            shift
+            ;;
+        --verbose|-v)
+            VERBOSE=true
+            shift
+            ;;
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
+        --clean)
+            CLEAN=true
+            shift
+            ;;
+        --clean-all)
+            CLEAN_ALL=true
+            shift
+            ;;
+        --interactive-login)
+            INTERACTIVE_LOGIN=true
+            shift
+            ;;
+        --danger)
+            DANGER_MODE=true
+            shift
+            ;;
+        --shell)
+            SHELL_MODE=true
+            shift
+            ;;
+        --dev)
+            DEV_MODE=true
+            shift
+            ;;
+        --registry-off)
+            REGISTRY_OFF=true
+            shift
+            ;;
+        --pull-latest)
+            PULL_LATEST=true
+            shift
+            ;;
+        --continue)
+            if [[ -n "$2" && "$2" != --* ]]; then
+                case "$2" in
+                    true|TRUE|yes|YES|1)
+                        CONTINUE_MODE=true
+                        ;;
+                    false|FALSE|no|NO|0)
+                        CONTINUE_MODE=false
+                        ;;
+                    *)
+                        log_error "--continue requires 'true' or 'false'"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+            else
+                # If no argument provided, default to true
+                CONTINUE_MODE=true
+                shift
+            fi
+            ;;
+        --install)
+            INSTALL=true
+            shift
+            ;;
+        --uninstall)
+            UNINSTALL=true
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
+# --- Validate Explicit Variant First ---
+if [ -n "$EXPLICIT_VARIANT" ]; then
+    if ! validate_variant "$EXPLICIT_VARIANT"; then
+        exit 1
+    fi
+fi
+
+# --- Load Configuration ---
+load_config
+
+# --- Early Configuration Determination for Special Commands ---
+# We need to determine VARIANT early for commands that might need it
+VARIANT=${EXPLICIT_VARIANT:-${SAVED_VARIANT:-$(auto_detect_variant)}}
+
+# --- Save Configuration if Explicit Options Were Provided ---
+# This must happen before early exits so that --show-config shows saved config
+if [ -n "$EXPLICIT_VARIANT" ] || [ "$DANGER_MODE" = true ] || [ -n "$EXPLICIT_ACCOUNT" ]; then
+    save_config "$VARIANT" "$DANGER_MODE" "${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+fi
+
+# --- Save API Key if Provided ---
+if [ -n "$EXPLICIT_APIKEY" ]; then
+    ACCOUNT_FOR_APIKEY="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+    save_api_key "$ACCOUNT_FOR_APIKEY" "$EXPLICIT_APIKEY"
+    
+    # If only setting API key, exit after saving
+    if [ -z "$EXPLICIT_VARIANT" ] && [ "$DANGER_MODE" = false ] && [ -z "$EXPLICIT_ACCOUNT" ] && [ "$SHOW_VARIANTS" = false ] && [ "$SHOW_ACCOUNTS" = false ] && [ "$SHOW_CONFIG" = false ] && [ "$CLEAN" = false ] && [ "$CLEAN_ALL" = false ] && [ "$REBUILD" = false ] && [ "$INSTALL" = false ] && [ "$UNINSTALL" = false ]; then
+        exit 0
+    fi
+fi
+
+# --- Handle Special Commands ---
+if [ "$SHOW_VARIANTS" = true ]; then
+    show_variants
+    exit 0
+fi
+
+if [ "$SHOW_ACCOUNTS" = true ]; then
+    show_accounts
+    exit 0
+fi
+
+if [ "$SHOW_CONFIG" = true ]; then
+    show_current_config
+    exit 0
+fi
+
+# --- Handle Clean All Command ---
+if [ "$CLEAN_ALL" = true ]; then
+    log_info "Cleaning up ALL claude-reactor containers..."
+    
+    # Get all claude-reactor container names
+    CLAUDE_CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep "^claude-reactor-" || true)
+    
+    if [ -n "$CLAUDE_CONTAINERS" ]; then
+        echo "$CLAUDE_CONTAINERS" | while read -r container_name; do
+            if [ -n "$container_name" ]; then
+                log_info "Stopping and removing container: $container_name"
+                docker stop "$container_name" &> /dev/null || true
+                docker rm "$container_name" &> /dev/null || true
+            fi
+        done
+        log_info "✅ All claude-reactor containers removed."
+    else
+        log_info "No claude-reactor containers found to clean up."
+    fi
+    
+    exit 0
+fi
+
+# --- Install/Uninstall Handling ---
+if [ "$INSTALL" = true ]; then
+    log_info "Installing claude-reactor to /usr/local/bin..."
+    
+    # Get the absolute path of this script
+    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    
+    # Check if we have sudo access
+    if ! sudo -n true 2>/dev/null; then
+        log_info "Requesting sudo access to install to /usr/local/bin..."
+    fi
+    
+    # Copy script to /usr/local/bin
+    if sudo cp "$SCRIPT_PATH" /usr/local/bin/claude-reactor; then
+        sudo chmod +x /usr/local/bin/claude-reactor
+        log_info "✅ claude-reactor installed successfully!"
+        log_info "You can now run 'claude-reactor' from anywhere."
+        exit 0
+    else
+        log_error "Failed to install claude-reactor."
+        exit 1
+    fi
+fi
+
+if [ "$UNINSTALL" = true ]; then
+    log_info "Removing claude-reactor from /usr/local/bin..."
+    
+    # Check if the file exists
+    if [ ! -f "/usr/local/bin/claude-reactor" ]; then
+        log_error "claude-reactor is not installed in /usr/local/bin"
+        exit 1
+    fi
+    
+    # Check if we have sudo access
+    if ! sudo -n true 2>/dev/null; then
+        log_info "Requesting sudo access to remove from /usr/local/bin..."
+    fi
+    
+    # Remove the script
+    if sudo rm /usr/local/bin/claude-reactor; then
+        log_info "✅ claude-reactor uninstalled successfully!"
+        exit 0
+    else
+        log_error "Failed to uninstall claude-reactor."
+        exit 1
+    fi
+fi
+
+# --- Dependency Check ---
+if ! command -v docker &> /dev/null; then
+    log_error "Docker is not installed or not in your PATH. Please install Docker Desktop."
+    exit 1
+fi
+
+log_verbose "Docker found: $(docker --version)"
+
+# --- Architecture Detection ---
+ARCHITECTURE=$(detect_architecture)
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+DOCKER_PLATFORM=$(get_docker_platform)
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
+# --- Registry Functions ---
+should_use_registry() {
+    if [ "$DEV_MODE" = true ] || [ "$REGISTRY_OFF" = true ]; then
+        return 1  # Don't use registry
+    fi
+    if [ "$CLAUDE_REACTOR_USE_REGISTRY" != "true" ]; then
+        return 1  # Don't use registry
+    fi
+    return 0  # Use registry
+}
+
+get_registry_image_name() {
+    local variant="$1"
+    echo "$CLAUDE_REACTOR_REGISTRY-$variant:$CLAUDE_REACTOR_TAG"
+}
+
+get_local_image_name() {
+    local variant="$1"
+    echo "$BASE_IMAGE_NAME-$variant-$ARCHITECTURE"
+}
+
+try_pull_from_registry() {
+    local variant="$1"
+    local registry_image=$(get_registry_image_name "$variant")
+    local local_image=$(get_local_image_name "$variant")
+    
+    if ! should_use_registry; then
+        log_verbose "Registry disabled, skipping pull"
+        return 1
+    fi
+    
+    log_info "Attempting to pull $variant variant from registry..."
+    log_verbose "Registry image: $registry_image"
+    
+    if docker pull "$registry_image" >/dev/null 2>&1; then
+        # Tag the pulled image with local naming convention
+        docker tag "$registry_image" "$local_image:latest" >/dev/null 2>&1
+        docker tag "$registry_image" "$local_image" >/dev/null 2>&1
+        log_info "✅ Successfully pulled $variant variant from registry"
+        return 0
+    else
+        log_info "❌ Failed to pull from registry, will build locally"
+        return 1
+    fi
+}
+
+image_exists_locally() {
+    local image_name="$1"
+    docker image inspect "$image_name" >/dev/null 2>&1
+}
+
+# --- Determine Names from Early Variant Assignment ---
+IMAGE_NAME="$BASE_IMAGE_NAME-$VARIANT-$ARCHITECTURE"
+
+# Create unique container name based on project path, account, and architecture
+PROJECT_HASH=$(echo "$(pwd)" | shasum -a 256 | cut -c1-8)
+ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+if [ -n "$ACCOUNT_ID" ]; then
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$ARCHITECTURE-$PROJECT_HASH-$ACCOUNT_ID"
+else
+    CONTAINER_NAME="$BASE_CONTAINER_NAME-$VARIANT-$ARCHITECTURE-$PROJECT_HASH"
+fi
+
+log_verbose "Using variant: $VARIANT"
+log_verbose "Architecture: $ARCHITECTURE"
+log_verbose "Docker platform: $DOCKER_PLATFORM"
+log_verbose "Project path: $(pwd)"
+log_verbose "Project hash: $PROJECT_HASH"
+log_verbose "Account: ${ACCOUNT_ID:-default}"
+log_verbose "Image name: $IMAGE_NAME"
+log_verbose "Container name: $CONTAINER_NAME"
+
+# --- Apply Saved Danger Mode ---
+if [ "$SAVED_DANGER" = true ] && [ "$DANGER_MODE" = false ]; then
+    log_verbose "Applying saved danger mode setting"
+    DANGER_MODE=true
+fi
+
+# --- Container Cleanup ---
+# --rebuild implicitly runs --clean
+if [ "$REBUILD" = true ]; then
+    CLEAN=true
+    log_verbose "Rebuild requested, enabling container cleanup"
+fi
+
+if [ "$CLEAN" = true ]; then
+    log_info "Cleaning up existing container..."
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_verbose "Stopping container $CONTAINER_NAME"
+        docker stop "$CONTAINER_NAME" &> /dev/null || true
+        log_verbose "Removing container $CONTAINER_NAME"
+        docker rm "$CONTAINER_NAME" &> /dev/null || true
+        log_info "Container $CONTAINER_NAME removed."
+    else
+        log_verbose "No existing container to clean up."
+    fi
+fi
+
+# --- Image Build Check ---
+# Try registry first, then fallback to local build if needed
+IMAGE_READY=false
+
+# Force pull if requested
+if [ "$PULL_LATEST" = true ]; then
+    log_info "Force pulling latest image from registry..."
+    docker rmi "$IMAGE_NAME" &> /dev/null || true
+fi
+
+# If rebuild is requested, clean up first
+if [ "$REBUILD" = true ]; then
+    log_info "Rebuilding Docker image '$IMAGE_NAME'..."
+    log_verbose "Removing existing image"
+    docker rmi "$IMAGE_NAME" &> /dev/null || true
+fi
+
+# Check if image exists locally
+if [ "$REBUILD" = false ] && image_exists_locally "$IMAGE_NAME"; then
+    log_verbose "Docker image '$IMAGE_NAME' already exists locally."
+    IMAGE_READY=true
+else
+    # Try to pull from registry first
+    if [ "$REBUILD" = false ] && try_pull_from_registry "$VARIANT"; then
+        IMAGE_READY=true
+    fi
+fi
+
+# If we don't have the image yet, build it locally
+if [ "$IMAGE_READY" = false ]; then
+    if [ "$REBUILD" = true ]; then
+        log_info "Rebuilding image locally..."
+    else
+        log_info "Building Docker image '$IMAGE_NAME' locally..."
+    fi
+    
+    if [ -f "Dockerfile" ]; then
+        log_info "Building variant: $VARIANT"
+        if [ "$VERBOSE" = true ]; then
+            docker build --target "$VARIANT" -t "$IMAGE_NAME" .
+        else
+            docker build --target "$VARIANT" -t "$IMAGE_NAME" . > /dev/null
+        fi
+        if [ $? -ne 0 ]; then
+            log_error "Docker build failed for variant '$VARIANT'."
+            log_error "Make sure the Dockerfile has a '$VARIANT' build stage."
+            exit 1
+        fi
+        log_info "Image '$IMAGE_NAME' (variant: $VARIANT) built successfully."
+        IMAGE_READY=true
+    else
+        log_error "Dockerfile not found. Please run '$SCRIPT_NAME' from the project root once to build the image."
+        exit 1
+    fi
+fi
+
+# Final verification
+if [ "$IMAGE_READY" = false ]; then
+    log_error "Failed to obtain Docker image '$IMAGE_NAME'."
+    exit 1
+fi
+
+# --- Container Lifecycle Management ---
+# Check if the container exists, regardless of its state (running or stopped)
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    # Container exists. Check if it's running.
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_info "Attaching to running container '${CONTAINER_NAME}'..."
+        log_verbose "Container is already running"
+    else
+        # Container is stopped, so start it.
+        log_info "Starting stopped container '${CONTAINER_NAME}'..."
+        log_verbose "Starting container $CONTAINER_NAME"
+        docker start "$CONTAINER_NAME" > /dev/null
+        if [ $? -ne 0 ]; then
+            log_error "Failed to start container."
+            exit 1
+        fi
+        log_verbose "Container started successfully"
+    fi
+else
+    # Container does not exist. Create and run it for the first time.
+    log_info "Creating and starting new container '${CONTAINER_NAME}'..."
+    
+    # Ensure host directories exist for mounting
+    mkdir -p "${HOME}/.claude"
+    mkdir -p "${HOME}/.kube"
+    
+    # Base arguments for the docker run command
+    DOCKER_RUN_ARGS=(
+        -d
+        --name "$CONTAINER_NAME"
+        -v "$(pwd):/app"
+        -v "${HOME}/.kube:/home/claude/.kube:ro"
+        -v "${HOME}/.gitconfig:/home/claude/.gitconfig:ro"
+        -v "/var/run/docker.sock:/var/run/docker.sock"
+    )
+    
+    # Setup account-specific Claude directory structure
+    ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+    CLAUDE_ACCOUNT_DIR=$(get_claude_account_dir "$ACCOUNT_ID")
+    
+    if [ -n "$CLAUDE_ACCOUNT_DIR" ]; then
+        # Named account - use isolated directory
+        if [ ! -d "$CLAUDE_ACCOUNT_DIR" ]; then
+            log_verbose "Creating account directory: $CLAUDE_ACCOUNT_DIR"
+            mkdir -p "$CLAUDE_ACCOUNT_DIR"
+            
+            # Copy main Claude files to account directory
+            if [ -f "${HOME}/.claude.json" ]; then
+                log_verbose "Copying ~/.claude.json to account directory"
+                cp "${HOME}/.claude.json" "$CLAUDE_ACCOUNT_DIR/.claude.json"
+            fi
+            if [ -d "${HOME}/.claude" ]; then
+                log_verbose "Copying ~/.claude/ to account directory"
+                cp -r "${HOME}/.claude" "$CLAUDE_ACCOUNT_DIR/.claude"
+            fi
+        fi
+        
+        # Mount account-specific Claude files
+        if [ -f "$CLAUDE_ACCOUNT_DIR/.claude.json" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_ACCOUNT_DIR/.claude.json:/home/claude/.claude.json")
+        fi
+        if [ -d "$CLAUDE_ACCOUNT_DIR/.claude" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$CLAUDE_ACCOUNT_DIR/.claude:/home/claude/.claude")
+        fi
+        log_verbose "Mounting account-specific Claude files from: $CLAUDE_ACCOUNT_DIR"
+    else
+        # Default account - mount main Claude files directly
+        if [ -f "${HOME}/.claude.json" ]; then
+            DOCKER_RUN_ARGS+=("-v" "${HOME}/.claude.json:/home/claude/.claude.json")
+            log_verbose "Mounting main .claude.json"
+        fi
+        if [ -d "${HOME}/.claude" ]; then
+            DOCKER_RUN_ARGS+=("-v" "${HOME}/.claude:/home/claude/.claude")
+            log_verbose "Mounting main .claude directory"
+        fi
+    fi
+    
+    # Update Claude settings for mounted directories
+    update_claude_settings_for_mounts
+    
+    # Add additional mount paths
+    for mount_path in "${MOUNT_PATHS[@]}"; do
+        # Expand tilde if present
+        expanded_path="${mount_path/#\~/$HOME}"
+        # Convert to absolute path
+        if [[ "$expanded_path" != /* ]]; then
+            expanded_path="$(pwd)/$expanded_path"
+        fi
+        # Get the basename for the mount point
+        mount_name=$(basename "$expanded_path")
+        # Check if directory exists
+        if [ -d "$expanded_path" ]; then
+            DOCKER_RUN_ARGS+=("-v" "$expanded_path:/mnt/$mount_name")
+            log_verbose "Adding mount: $expanded_path -> /mnt/$mount_name"
+        else
+            log_warning "Mount path does not exist: $expanded_path"
+        fi
+    done
+    
+    
+    # Handle authentication method
+    if [ "$INTERACTIVE_LOGIN" = true ]; then
+        log_info "Using interactive UI login (--interactive-login specified)."
+        log_verbose "Skipping API key authentication"
+    else
+        # Check for project-specific API key files first
+        ACCOUNT_ID="${EXPLICIT_ACCOUNT:-$SAVED_ACCOUNT}"
+        PROJECT_API_KEY_FILE=$(get_api_key_file "$ACCOUNT_ID")
+        
+        if [ -f "$PROJECT_API_KEY_FILE" ]; then
+            log_info "Project-specific API key found: $PROJECT_API_KEY_FILE"
+            DOCKER_RUN_ARGS+=("--env-file" "$PROJECT_API_KEY_FILE")
+            log_verbose "Using project API key for account: ${ACCOUNT_ID:-default}"
+        elif [ -f "${HOME}/.env" ]; then
+            log_info "Global API key found: ~/.env"
+            DOCKER_RUN_ARGS+=("--env-file" "${HOME}/.env")
+            log_verbose "Using global ~/.env API key file"
+        else
+            # Check if Claude config exists for authentication
+            has_claude_config=false
+            if [ -n "$CLAUDE_ACCOUNT_DIR" ]; then
+                # Named account - check account-specific config
+                if [ -f "$CLAUDE_ACCOUNT_DIR/.claude.json" ]; then
+                    has_claude_config=true
+                fi
+            else
+                # Default account - check main config
+                if [ -f "${HOME}/.claude.json" ]; then
+                    has_claude_config=true
+                fi
+            fi
+            
+            if [ "$has_claude_config" = true ]; then
+                if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+                    log_info "No API key files found. Using existing Claude authentication for account: $ACCOUNT_ID"
+                else
+                    log_info "No API key files found. Using existing Claude authentication from config."
+                fi
+                log_verbose "Create project API key if needed: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
+            else
+                log_info "No API key files found. Using interactive UI login."
+                log_verbose "Create project API key: claude-reactor --account ${ACCOUNT_ID:-default} --apikey YOUR_KEY"
+                log_verbose "Or create global ~/.env with ANTHROPIC_API_KEY=YOUR_KEY"
+            fi
+        fi
+    fi
+    
+    log_verbose "Docker run command: docker run ${DOCKER_RUN_ARGS[*]} $IMAGE_NAME"
+    
+    # Execute the run command
+    docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME" > /dev/null
+    
+    if [ $? -ne 0 ]; then
+        log_error "Failed to run container."
+        exit 1
+    fi
+    log_verbose "Container created and started successfully"
+    
+    # Show mounted directories summary
+    if [ ${#MOUNT_PATHS[@]} -gt 0 ]; then
+        log_info "📁 Mounted directories:"
+        for mount_path in "${MOUNT_PATHS[@]}"; do
+            expanded_path="${mount_path/#\~/$HOME}"
+            mount_name=$(basename "$expanded_path")
+            if [ -d "$expanded_path" ]; then
+                log_info "   $expanded_path → /mnt/$mount_name"
+            fi
+        done
+    fi
+fi
+
+# --- Container Health Check ---
+log_verbose "Checking container health..."
+for i in {1..5}; do
+    if docker exec "$CONTAINER_NAME" echo "Container is responsive" &> /dev/null; then
+        log_verbose "Container health check passed"
+        break
+    fi
+    if [ $i -eq 5 ]; then
+        log_error "Container is not responding after 5 attempts."
+        exit 1
+    fi
+    log_verbose "Container health check attempt $i failed, retrying..."
+    sleep 1
+done
+
+# --- Attach to the Container ---
+# By this point, the container is guaranteed to be running.
+
+# Build claude command 
+CLAUDE_CMD="claude"
+if [ "$DANGER_MODE" = true ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
+fi
+if [ "$CONTINUE_MODE" = true ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --continue"
+fi
+
+# The entrypoint.sh handles user and docker socket setup.
+# We must explicitly set the DOCKER_HOST env var for the exec session
+# so it uses the socat proxy.
+DOCKER_EXEC_CMD="docker exec -it -e DOCKER_HOST=unix:///home/claude/docker.sock"
+
+if [ "$SHELL_MODE" = true ]; then
+    # User explicitly requested shell access
+    log_info "Launching bash shell in container"
+    $DOCKER_EXEC_CMD "$CONTAINER_NAME" bash-with-prompt
+elif [ "$DANGER_MODE" = true ]; then
+    # User requested danger mode - launch Claude CLI with bypassed permissions
+    log_info "⚠️  DANGER MODE: Launching Claude CLI with --dangerously-skip-permissions"
+    if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+        log_verbose "Connecting directly to Claude CLI (configured for account: $ACCOUNT_ID)"
+    else
+        log_verbose "Connecting directly to Claude CLI with bypassed permissions"
+    fi
+    $DOCKER_EXEC_CMD "$CONTAINER_NAME" $CLAUDE_CMD
+else
+    # Default behavior - launch Claude CLI directly
+    log_info "Launching Claude CLI in container"
+    if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "default" ]; then
+        log_verbose "Connecting directly to Claude CLI (configured for account: $ACCOUNT_ID)"
+    else
+        log_verbose "Connecting directly to Claude CLI"
+    fi
+    $DOCKER_EXEC_CMD "$CONTAINER_NAME" $CLAUDE_CMD
+fi

@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Value Propositions**:
 - **Zero Configuration**: Auto-detects project type and sets up appropriate development environment
+- **Registry Integration**: Automatically pulls pre-built images from GitHub Container Registry for instant startup
 - **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows  
 - **Professional Automation**: Makefile + script integration for both development and CI/CD
 - **Persistent Intelligence**: Remembers your preferences and configurations per project
@@ -36,6 +37,8 @@ This project creates a modular Docker containerization system for Claude CLI wit
 - **Auto-detection**: Detects project type (go.mod → go variant, etc.)
 - **Persistent preferences**: `.claude-reactor` file saves variant choice
 - **Danger mode persistence**: Remembers `--danger` flag preference per project
+- **Registry-first**: Attempts to pull from ghcr.io, falls back to local builds
+- **Development mode**: `--dev` flag forces local builds for development
 
 ## Current Project Structure
 
@@ -53,6 +56,9 @@ claude-reactor/
 ├── CLAUDE.md                  # This file - project guidance
 ├── WORKFLOW.md                # Tool responsibilities and usage patterns
 ├── ROADMAP.md                 # Future enhancements and prioritization
+├── .github/                   # CI/CD automation
+│   └── workflows/
+│       └── build-and-push.yml # Multi-architecture builds and registry pushes
 ├── tests/                     # Comprehensive test suite
 │   ├── test-runner.sh         # Main test orchestrator
 │   ├── demo.sh                # Interactive feature demonstration
@@ -92,12 +98,32 @@ Each Claude account gets its own isolated configuration:
 ### **Primary Development Workflow (Recommended)**
 ```bash
 # Smart container management - auto-detects project type
-./claude-reactor                    # Launch Claude CLI directly (uses saved config)
-./claude-reactor --image go         # Set specific container image and save preference
-./claude-reactor --shell            # Launch bash shell instead of Claude CLI
-./claude-reactor --danger           # Launch Claude CLI with --dangerously-skip-permissions
-./claude-reactor --show-config      # Check current configuration
-./claude-reactor --list-variants    # See all available options
+claude-reactor                      # Launch Claude CLI directly (uses saved config)
+claude-reactor run --image go       # Set specific container image and save preference
+claude-reactor run --shell          # Launch bash shell instead of Claude CLI
+claude-reactor run --danger         # Launch Claude CLI with --dangerously-skip-permissions
+claude-reactor config show          # Check current configuration
+claude-reactor debug info           # See all available options
+```
+
+### **Multi-Account Workflow**
+```bash
+# Default account usage (no account specified)
+claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
+
+# Work account usage
+claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
+claude-reactor config show      # Shows: Account: work
+
+# Personal account usage  
+claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
+
+# Account-specific API key (optional)
+claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
+
+# Switch between accounts in different projects
+cd ~/work-project && claude-reactor  # Uses work account if saved in .claude-reactor
+cd ~/personal-project && claude-reactor  # Uses personal account if saved in .claude-reactor
 ```
 
 **Container Images:**
@@ -108,21 +134,21 @@ Each Claude account gets its own isolated configuration:
 ### **Multi-Account Workflow**
 ```bash
 # Default account usage (no account specified)
-./claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
+claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
 
 # Work account usage
-./claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
-./claude-reactor --show-config      # Shows: Account: work
+claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
+claude-reactor config show      # Shows: Account: work
 
 # Personal account usage  
-./claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
+claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
 
 # Account-specific API key (optional)
-./claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
+claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
 
 # Switch between accounts in different projects
-cd ~/work-project && ./claude-reactor  # Uses work account if saved in .claude-reactor
-cd ~/personal-project && ./claude-reactor  # Uses personal account if saved in .claude-reactor
+cd ~/work-project && claude-reactor  # Uses work account if saved in .claude-reactor
+cd ~/personal-project && claude-reactor  # Uses personal account if saved in .claude-reactor
 ```
 
 ### **Build and Test Automation**
@@ -134,6 +160,11 @@ make test                          # Run complete test suite (unit + integration
 make demo                          # Interactive feature demonstration
 make run-go                        # Quick container startup (delegates to claude-reactor)
 make clean-all                     # Complete cleanup
+
+# Registry management
+make push-all                      # Build and push core variants to registry
+make pull-all                      # Pull core variants from registry
+make registry-login                # Log in to container registry
 ```
 
 ### **Typical Development Session**
@@ -141,282 +172,84 @@ make clean-all                     # Complete cleanup
 # 1. Navigate to project directory
 cd my-go-project
 
-# 2. Start development container (auto-detects Go, saves preference)
-make run                           # or ./claude-reactor
+# 2. Start development container (auto-detects Go, pulls from registry if available)
+make run                           # or claude-reactor
 
 # 3. Work in container with full Go toolchain
 # 4. Run tests and validation
 make test-unit                     # Quick validation (5 seconds)
 
 # 5. Clean up when done
-make clean-containers              # or ./claude-reactor --clean
+make clean-containers              # or claude-reactor --clean
+```
+
+### **Registry-Enabled Workflows**
+```bash
+# Standard usage (registry-first, local fallback)
+claude-reactor                   # Pulls from ghcr.io/dylutclaude-reactor automatically
+
+# Development workflows
+claude-reactor --dev             # Force local build for development/testing
+claude-reactor --pull-latest     # Ensure you have the newest image
+
+# CI/CD and maintenance
+make pull-all                      # Pull all variants from registry
+make push-all                      # Build and push to registry (requires auth)
+make registry-login                # Login to GitHub Container Registry
 ```
 
 ### **Advanced Usage**
 ```bash
 # Force specific configurations
-./claude-reactor --image cloud --danger    # Cloud tools + skip permissions
-./claude-reactor --rebuild                 # Force image rebuild
+claude-reactor --image cloud --danger    # Cloud tools + skip permissions
+claude-reactor --rebuild                 # Force image rebuild
+
+# Registry management
+claude-reactor --dev                       # Force local build (disable registry)
+claude-reactor --registry-off              # Disable registry completely
+claude-reactor --pull-latest               # Force pull latest from registry
 
 # Manual Docker control (rarely needed)
 docker build --target go -t claude-reactor-go .
 docker run -d --name claude-agent-go -v "$(pwd)":/app claude-reactor-go
 ```
 
-### **Custom Docker Images**
-Use any Docker image with claude-reactor for specialized development environments beyond the built-in variants:
-
-```bash
-# Quick start with custom images
-./claude-reactor --image ubuntu:22.04      # Ubuntu-based development
-./claude-reactor --image node:18-alpine    # Node.js development
-./claude-reactor --image python:3.11       # Python development
-
-# Advanced custom image usage
-./claude-reactor --image myregistry/custom-image:latest --account work
-./claude-reactor --image nvidia/cuda:11.8-devel  # GPU development
-./claude-reactor --image ghcr.io/devcontainers/python:3.11  # VS Code Dev Container
-```
-
-**Requirements for Custom Images:**
-- **Platform**: Must be Linux-based (`linux/amd64` or `linux/arm64`)
-- **Claude CLI**: Must have Claude CLI installed and accessible via `claude --version`
-- **Base system**: Should have basic shell utilities (`sh`, `bash`, or compatible)
-
-**Recommended Tools (High Priority):**
-- `git` - Version control operations
-- `curl` - Network operations and downloads
-- `make` - Build automation
-- `nano` or `vim` - Text editing
-
-**Optional Tools (Enhance Experience):**
-- `wget` - Alternative download tool
-- `jq` - JSON processing
-- `zip`/`unzip` - Archive handling
-- `ssh` - Remote access capabilities
-- `ripgrep` (`rg`) - Fast text search
-- `yq` - YAML processing
-
-**Validation Process:**
-Claude-reactor automatically validates custom images before use:
-
-1. **Platform Check**: Verifies Linux compatibility
-2. **Claude CLI Detection**: Tests `claude --version` command
-3. **Package Analysis**: Scans for 10 recommended development tools
-4. **Smart Warnings**: Shows missing high-priority tools (once per session)
-5. **Result Caching**: Stores validation results for 30+ days (immutable image digests)
-
-**Common Custom Image Patterns:**
-
-```bash
-# Language-specific development
-./claude-reactor --image rust:1.75          # Latest Rust toolchain
-./claude-reactor --image golang:1.21        # Go development
-./claude-reactor --image openjdk:21         # Java development
-./claude-reactor --image php:8.3-cli        # PHP development
-
-# Specialized environments
-./claude-reactor --image tensorflow/tensorflow:latest-gpu  # ML/AI with GPU
-./claude-reactor --image cypress/browsers:latest          # Browser testing
-./claude-reactor --image hashicorp/terraform:latest       # Infrastructure as code
-
-# Registry-specific images
-./claude-reactor --image ghcr.io/user/project:latest      # GitHub Container Registry
-./claude-reactor --image us-central1-docker.pkg.dev/project/repo/image:tag  # Google Artifact Registry
-./claude-reactor --image registry.gitlab.com/group/project:latest           # GitLab Container Registry
-```
-
-**Custom Image Best Practices:**
-
-1. **Start with minimal base**: Use Alpine Linux or distroless images when possible
-2. **Install Claude CLI**: Add to your Dockerfile: `curl -fsSL https://claude.ai/install.sh | sh`
-3. **Include development essentials**: `git`, `curl`, `make`, `nano`
-4. **Test compatibility**: Run `claude-reactor --image your-image:tag --shell` first
-5. **Version pinning**: Use specific tags rather than `latest` for reproducibility
-
-### **Custom Image Examples**
-
-#### **Data Science & Machine Learning**
-```bash
-# Python data science stack
-./claude-reactor --image jupyter/scipy-notebook:latest
-./claude-reactor --image tensorflow/tensorflow:latest-gpu
-./claude-reactor --image pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel
-
-# R development
-./claude-reactor --image rocker/tidyverse:latest
-./claude-reactor --image rocker/rstudio:latest
-```
-
-#### **Web Development**
-```bash
-# Modern JavaScript/TypeScript
-./claude-reactor --image node:18-alpine          # Minimal Node.js
-./claude-reactor --image node:20-bullseye        # Full Debian base
-./claude-reactor --image denoland/deno:alpine    # Deno runtime
-
-# PHP development
-./claude-reactor --image php:8.3-cli-alpine      # CLI-focused
-./claude-reactor --image php:8.3-fpm-bullseye    # Full web stack
-```
-
-#### **Systems Programming**
-```bash
-# Rust development
-./claude-reactor --image rust:1.75-alpine        # Latest Rust
-./claude-reactor --image rust:1.75-slim-bullseye # Rust with more tools
-
-# C/C++ development
-./claude-reactor --image gcc:latest               # GCC compiler
-./claude-reactor --image clang:17                 # LLVM/Clang
-```
-
-#### **Cloud & DevOps**
-```bash
-# AWS development
-./claude-reactor --image amazon/aws-cli:latest
-./claude-reactor --image amazon/aws-sam-cli-build-image-python3.11
-
-# Google Cloud
-./claude-reactor --image gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
-./claude-reactor --image gcr.io/google.com/cloudsdktool/cloud-sdk:latest
-
-# Azure development  
-./claude-reactor --image mcr.microsoft.com/azure-cli:latest
-./claude-reactor --image mcr.microsoft.com/dotnet/sdk:8.0
-
-# Kubernetes tooling
-./claude-reactor --image bitnami/kubectl:latest
-./claude-reactor --image alpine/helm:latest
-```
-
-#### **Database Development**
-```bash
-# Database clients and tools
-./claude-reactor --image postgres:16-alpine      # PostgreSQL client
-./claude-reactor --image mysql:8.0               # MySQL client
-./claude-reactor --image mongo:7                 # MongoDB tools
-./claude-reactor --image redis:7-alpine          # Redis tools
-```
-
-#### **Scientific Computing**
-```bash
-# Jupyter environments
-./claude-reactor --image jupyter/datascience-notebook:latest
-./claude-reactor --image jupyter/tensorflow-notebook:latest
-./claude-reactor --image quay.io/jupyter/scipy-notebook:latest
-
-# Specialized scientific tools
-./claude-reactor --image continuumio/anaconda3:latest
-./claude-reactor --image condaforge/mambaforge:latest
-```
-
-#### **Custom Registry Images**
-```bash
-# GitHub Container Registry
-./claude-reactor --image ghcr.io/devcontainers/python:3.11-bullseye
-./claude-reactor --image ghcr.io/microsoft/vscode-dev-containers/typescript-node:0-18-bullseye
-
-# Custom enterprise registries
-./claude-reactor --image registry.company.com/dev/nodejs:18
-./claude-reactor --image us-central1-docker.pkg.dev/project/repo/custom-dev:latest
-
-# GitLab Container Registry
-./claude-reactor --image registry.gitlab.com/group/project/dev-env:latest
-```
-
-#### **Creating Custom Images**
-
-**Simple Claude-Compatible Image:**
-```dockerfile
-FROM ubuntu:22.04
-
-# Install Claude CLI
-RUN curl -fsSL https://claude.ai/install.sh | sh
-
-# Install essential development tools
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    make \
-    nano \
-    wget \
-    jq \
-    zip \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m -s /bin/bash claude
-USER claude
-WORKDIR /home/claude
-
-# Set up shell environment
-RUN echo 'alias ll="ls -la"' >> ~/.bashrc
-```
-
-**Language-Specific Custom Image:**
-```dockerfile
-FROM golang:1.21-bullseye
-
-# Install Claude CLI
-RUN curl -fsSL https://claude.ai/install.sh | sh
-
-# Install additional Go tools
-RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
-    go install github.com/swaggo/swag/cmd/swag@latest && \
-    go install github.com/air-verse/air@latest
-
-# Install development essentials
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    make \
-    nano \
-    ripgrep \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create claude user
-RUN useradd -m -s /bin/bash claude && \
-    usermod -aG sudo claude
-USER claude
-WORKDIR /workspace
-```
-
-**Build and test custom image:**
-```bash
-# Build the image
-docker build -t my-custom-dev:latest .
-
-# Test compatibility
-claude-reactor debug image my-custom-dev:latest
-
-# Use the custom image
-claude-reactor --image my-custom-dev:latest
-```
-
 ## Configuration Files
 
 ### `.claude-reactor` (Project-specific settings)
 ```bash
-# Built-in variant or custom Docker image
-variant=go                                  # Built-in variants: base, go, full, cloud, k8s
-variant=ubuntu:22.04                        # Custom Docker image
-variant=ghcr.io/user/project:latest         # Registry image
-
-# Additional configuration
-danger=true                                 # Enable danger mode
-account=work                               # Account isolation
+variant=go
+danger=true
+account=work
 ```
 
-This file is automatically created when you use `--image`, `--danger`, or `--account` flags and stores your preferences per project directory.
+This file is automatically created when you use `run --image`, `--danger`, or `--account` flags and stores your preferences per project directory.
 
 **Configuration Options:**
-- `variant=` - Container image (built-in variants: `base`, `go`, `full`, `cloud`, `k8s` or custom Docker image)
-- `danger=` - Enable danger mode (true/false)  
+- `variant=` - Container variant (base, go, full, cloud, k8s)
+- `danger=` - Enable danger mode (true/false)
 - `account=` - Claude account to use (creates isolated authentication)
 
-**Note**: The config file uses `variant=` for backward compatibility, but the CLI uses `--image` flag.
+### **Container Registry Configuration**
+
+Claude-Reactor automatically pulls pre-built images from GitHub Container Registry for faster startup times.
+
+**Registry Settings:**
+```bash
+# Environment variables (optional)
+export CLAUDE_REACTOR_REGISTRY="ghcr.io/dylutclaude-reactor"  # Default registry
+export CLAUDE_REACTOR_USE_REGISTRY=true                        # Enable registry (default: true)
+export CLAUDE_REACTOR_TAG=latest                               # Image tag (default: latest)
+```
+
+**Registry Behavior:**
+- **Default**: Attempts to pull from `ghcr.io/dylutclaude-reactor` first
+- **Fallback**: Builds locally if registry pull fails
+- **Development**: Use `--dev` flag to force local builds
+- **Public Images**: No authentication required for pulls
+- **Multi-arch**: Supports both ARM64 (M1 Macs) and AMD64 architectures
+- **Versioning**: Supports `latest`, `v0.1.0`, and `dev` tags
+- **CI/CD Integration**: Automatic builds on git push and tags
 
 ### **Account-Specific Authentication Files**
 The system creates separate Claude configuration files for each account:
@@ -433,6 +266,58 @@ The system creates separate Claude configuration files for each account:
 - First time using an account: Config is auto-copied from `~/.claude.json`
 - Each account gets isolated OAuth tokens and project settings
 - Containers are named with account: `claude-reactor-*-work`, `claude-reactor-*-personal`
+
+## CI/CD and Release Management
+
+### **GitHub Actions Integration**
+Claude-Reactor includes comprehensive CI/CD automation through GitHub Actions:
+
+**Automatic Triggers:**
+- **Push to main**: Builds and pushes `latest` images
+- **Create tag `v*`**: Builds and pushes version-tagged images (e.g., `v0.1.0`)
+- **Pull requests**: Builds and tests without pushing
+- **Manual dispatch**: Supports `dev` tag builds
+
+**Multi-Architecture Builds:**
+- Builds for both `linux/amd64` and `linux/arm64`
+- Uses Docker Buildx for efficient cross-platform compilation
+- Leverages GitHub Actions build cache for speed
+
+**Security and Quality:**
+- Trivy security scanning on core variants
+- Integration tests with registry images
+- SARIF upload to GitHub Security tab
+
+### **Release Workflow**
+```bash
+# Create and push a new release
+echo "v0.2.0" > VERSION
+git add VERSION
+git commit -m "Release v0.2.0"
+git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+
+# GitHub Actions will automatically:
+# 1. Build all variants for both architectures
+# 2. Push to ghcr.io/dylutclaude-reactor-*:v0.2.0
+# 3. Push to ghcr.io/dylutclaude-reactor-*:latest
+# 4. Run security scans
+# 5. Create GitHub release (if configured)
+```
+
+### **Manual Registry Management**
+```bash
+# Login to GitHub Container Registry
+echo $GITHUB_TOKEN | docker login ghcr.io -u dyluth --password-stdin
+
+# Build and push manually (if needed)
+make push-all                      # Core variants (base, go, full)
+make push-extended                 # All variants including cloud/k8s
+
+# Pull specific versions
+CLAUDE_REACTOR_TAG=v0.1.0 claude-reactor --pull-latest
+```
 
 ## Development Philosophy & Best Practices
 
@@ -504,11 +389,11 @@ RUN wget https://github.com/anthropics/claude-cli/releases/latest/download/claud
 docker inspect your-image:tag | grep Architecture
 
 # For M1 Macs, prefer ARM64 images:
-./claude-reactor --image node:18-alpine     # Multi-arch (preferred)
-./claude-reactor --image --platform linux/arm64 node:18-alpine
+claude-reactor --image node:18-alpine     # Multi-arch (preferred)
+claude-reactor --image --platform linux/arm64 node:18-alpine
 
 # Force AMD64 if needed (slower on M1):
-./claude-reactor --image --platform linux/amd64 your-image:tag
+claude-reactor --image --platform linux/amd64 your-image:tag
 ```
 
 #### **3. Missing Development Tools**
@@ -665,24 +550,24 @@ claude-reactor debug image your-image:tag
 #### **Image Selection Tips**
 ```bash
 # Prefer multi-architecture images
-./claude-reactor --image node:18-alpine    # Multi-arch
-./claude-reactor --image python:3.11-slim  # Multi-arch
+claude-reactor --image node:18-alpine    # Multi-arch
+claude-reactor --image python:3.11-slim  # Multi-arch
 
 # Language-specific optimized images
-./claude-reactor --image golang:1.21-alpine     # Go development
-./claude-reactor --image rust:1.75-slim-bullseye # Rust development
-./claude-reactor --image openjdk:21-slim        # Java development
+claude-reactor --image golang:1.21-alpine     # Go development
+claude-reactor --image rust:1.75-slim-bullseye # Rust development
+claude-reactor --image openjdk:21-slim        # Java development
 ```
 
 #### **Registry Selection**
 ```bash
 # Use geographically closer registries
-./claude-reactor --image gcr.io/image:tag      # Google Container Registry
-./claude-reactor --image ghcr.io/user/image:tag # GitHub Container Registry
+claude-reactor --image gcr.io/image:tag      # Google Container Registry
+claude-reactor --image ghcr.io/user/image:tag # GitHub Container Registry
 
 # Use cached layers when possible
-./claude-reactor --image ubuntu:22.04  # Likely cached
-./claude-reactor --image alpine:latest # Small and common
+claude-reactor --image ubuntu:22.04  # Likely cached
+claude-reactor --image alpine:latest # Small and common
 ```
 
 ### **Getting Help**
@@ -725,187 +610,12 @@ claude-reactor --verbose --log-level debug run --image your-image:tag
 
 **Key Achievements**:
 - ✅ **Zero-friction setup**: Auto-detection eliminates configuration overhead
+- ✅ **Registry integration**: Automatic pulls from GitHub Container Registry with local fallback
 - ✅ **Language ecosystem support**: Go, Rust, Java, Python, Node.js, cloud tools
-- ✅ **Professional automation**: 25+ Makefile targets for all workflows
+- ✅ **Professional automation**: 30+ Makefile targets including registry management
+- ✅ **CI/CD pipeline**: Multi-architecture builds, security scanning, automated releases
 - ✅ **Comprehensive testing**: Unit, integration, and demo validation
 - ✅ **Smart persistence**: Remembers preferences without manual configuration
 - ✅ **Production architecture**: Multi-stage builds, security best practices, efficient resource usage
 
-**Ready for**: Personal projects, team development, educational use, and foundation for enterprise development workflows.
-
-## Reactor-Fabric Implementation Guide
-
-### **Implementation Phases**
-
-This project is implementing **Reactor-Fabric**, a distributed MCP orchestration system as defined in `ai-prompts/6-distributed-mcp-orchestration-system.md`. Implementation follows strict phase ordering:
-
-#### **Phase 0 - Prerequisite Repository Refactoring (MANDATORY FIRST)**
-- **Goal**: Restructure repository to support multiple Go applications from shared codebase
-- **Gate**: ALL existing tests must pass after refactoring before Phase 1 begins
-- **Actions**:
-  - Move claude-reactor logic to `cmd/claude-reactor/` and `internal/reactor/`
-  - Update Makefile for dual build targets (`make build-reactor`, `make build-fabric`)
-  - Ensure 100% backward compatibility for existing claude-reactor functionality
-
-#### **Phase 1 - Core Orchestrator**
-- **Goal**: Foundational orchestrator with YAML parsing and Docker container management
-- **Deliverables**:
-  - Go project structure under `cmd/reactor-fabric/` and `internal/fabric/`
-  - YAML configuration parsing using structs in `pkg/`
-  - Docker SDK integration for container lifecycle management
-  - Makefile targets for reactor-fabric build and execution
-
-#### **Phase 2 - MCP Proxying & Client Integration (MVP)**
-- **Goal**: Enable claude-reactor client to register and use dynamically spawned services
-- **Deliverables**:
-  - MCP server endpoint with session management
-  - `fabric/registerClient` tool implementation
-  - Transparent proxy logic for client-container communication
-  - Volume mount injection using session context
-  - End-to-end single-client workflow
-
-#### **Phase 3 - Multi-Client & Operations**
-- **Goal**: Production-ready system with comprehensive tooling and documentation
-- **Deliverables**:
-  - Documentation structure (`docs/README.md`, `DEVELOPMENT.md`, `USAGE.md`)
-  - `claude-mcp-suite.yaml` schema and example templates
-  - `make validate-config` and `make test-onboarding` targets
-  - Concurrent client test scenarios
-  - Troubleshooting procedures
-
-### **Key Implementation Requirements**
-
-#### **Backward Compatibility (Critical)**
-- Claude-reactor MUST function identically when reactor-fabric is not present
-- No hard dependencies between applications
-- Graceful fallback with clear warning messages
-
-#### **Discovery & Connection**
-- Environment variable: `REACTOR_FABRIC_ENDPOINT` 
-- Client behavior: If set but unreachable, warn and fallback to standalone mode
-- Default: Standalone operation (no orchestrator required)
-
-#### **Security Model**
-- **Mount Validation**: Strict validation against `allowed_mount_roots` in YAML config
-- **Docker Socket**: All Docker SDK calls with 30-second timeout contexts
-- **Path Security**: Resolve and validate all mount paths against allowlist
-
-#### **Performance Targets**
-- **P95 Container Start**: <3.5 seconds from tool request to container ready
-- **P99 Proxy Latency**: <50ms orchestrator overhead
-- **Memory**: <200MB orchestrator, <500MB per service container
-- **Concurrency**: 10+ service containers on typical developer machine
-
-### **Development Workflow for Reactor-Fabric**
-
-#### **Getting Started**
-```bash
-# Phase 0: Verify current state
-make test-unit                    # Must pass 100% before refactoring
-make test                         # Full test suite validation
-
-# Phase 1+: Development workflow
-make build-fabric                 # Build reactor-fabric binary
-make validate-config example.yaml # Validate configuration syntax
-make test-fabric                  # Run fabric-specific tests
-```
-
-#### **Testing Strategy (TDD Required)**
-```bash
-# Unit tests (Phase 1)
-make test-unit-fabric            # YAML parsing, container lifecycle
-make test-unit-all               # All unit tests including reactor
-
-# Integration tests (Phase 2) 
-make test-integration-fabric     # Docker daemon integration
-make test-mcp-proxy             # MCP communication flow
-
-# End-to-end tests (Phase 3)
-make test-e2e-fabric            # Full orchestrator workflow
-make test-concurrent-clients    # Multi-client scenarios
-```
-
-#### **Configuration Development**
-```yaml
-# Development claude-mcp-suite.yaml template
-version: "1.0"
-orchestrator:
-  allowed_mount_roots:
-    - "/Users/"
-    - "/home/"
-    - "/tmp/"
-
-mcp_services:
-  filesystem:
-    image: "ghcr.io/modelcontextprotocol/server-filesystem:latest"
-    timeout: "1m"
-  
-  git:
-    image: "ghcr.io/modelcontextprotocol/server-git:latest" 
-    timeout: "5m"
-    
-  claude_expert:
-    image: "claude-reactor:go"
-    timeout: "10m"
-    config:
-      account: "default"
-      danger_mode: false
-```
-
-### **Error Handling & JSON-RPC Codes**
-
-#### **Custom Error Codes**
-- `-32001`: Docker Daemon Unresponsive
-- `-32002`: Container Start Failure  
-- `-32003`: Invalid Suite Configuration
-- `-32004`: Security Violation (disallowed mount)
-- `-32005`: Service Not Found
-
-#### **Graceful Degradation**
-- Single service failure must not crash orchestrator
-- Errors isolated to requesting client only
-- Detailed logging for debugging and monitoring
-
-### **Code Architecture Patterns**
-
-#### **Shared Types (pkg/)**
-```go
-// Core configuration structures
-type MCPSuite struct {
-    Version      string                `yaml:"version"`
-    Orchestrator OrchestratorConfig    `yaml:"orchestrator"`
-    Services     map[string]MCPService `yaml:"mcp_services"`
-}
-
-type ClientContext struct {
-    SessionID string
-    Mounts    []Mount
-}
-```
-
-#### **Transparent Proxy Pattern**
-- Inspect only first message for `fabric/registerClient`
-- Route subsequent messages by session ID without parsing
-- Maintain connection state for cleanup
-
-#### **Container Lifecycle Management**
-- On-demand container creation per service request
-- Session-specific volume mounts from client context
-- Configurable idle timeout with automatic cleanup
-- Health check integration for startup validation
-
-### **Professional Standards**
-
-#### **Documentation Requirements**
-- Comprehensive API documentation for MCP tools
-- Example configurations for common use cases  
-- Troubleshooting guides for Docker and connectivity issues
-- Security considerations and best practices
-
-#### **Operational Tooling**
-- Configuration validation utilities
-- Health check endpoints for monitoring
-- Structured logging with appropriate levels
-- Metrics collection for performance monitoring
-
-This implementation transforms Claude-Reactor from a single-container system into a distributed AI orchestration platform while maintaining its zero-configuration philosophy and professional automation standards.
+**Ready for**: Personal projects, team development, educational use, enterprise development workflows, and public distribution via container registry.

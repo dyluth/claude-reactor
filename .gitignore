@@ -1,20 +1,14 @@
 # Claude-reactor project-specific configuration files
 .claude-reactor
-./.claude-reactor-*-env
-claude-reactor
-!cmd/claude-reactor
-claude-reactor-*
-main
+.claude-reactor-*-env
 
 # Claude Code local settings
 .claude/
-old/
 
 # Test directories and files
 support-bot-test/
 test-project/
 *-test/
-*test
 
 # Environment files containing API keys
 .env
@@ -22,7 +16,6 @@ test-project/
 
 # Docker temporary files
 .claude.json.*
-dist*
 
 # macOS
 .DS_Store
@@ -36,7 +29,6 @@ dist*
 # Logs
 *.log
 test*
-
-# other downloaded stuff
-*.gz
-*.tar
+# Binary files - should be built in CI/CD, not committed
+claude-reactor-*
+!cmd/claude-reactor

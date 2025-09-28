@@ -8,7 +8,7 @@ Claude-Reactor transforms the basic Claude CLI into a comprehensive development 
 
 **Key Features:**
 - **Zero Configuration**: Auto-detects project type and sets up appropriate development environment
-- **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows  
+- **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows
 - **Professional Automation**: Comprehensive CLI with intelligent container management
 - **Account Isolation**: Complete separation between different Claude accounts
 - **Custom Images**: Support for custom Docker images with compatibility validation
@@ -84,7 +84,7 @@ Claude-Reactor provides complete account isolation for teams and personal use:
 claude-reactor
 
 # Work account (isolated config and containers)
-claude-reactor run --account work      
+claude-reactor run --account work
 
 # Personal account
 claude-reactor run --account personal  
@@ -159,10 +159,10 @@ Use any Linux-based Docker image with validation:
 
 ```bash
 # Python scientific computing
-./claude-reactor run --image jupyter/scipy-notebook
+claude-reactor run --image jupyter/scipy-notebook
 
-# Custom enterprise image  
-./claude-reactor run --image myregistry.com/dev-env:latest
+# Custom enterprise image
+claude-reactor run --image myregistry.com/dev-env:latest
 
 # Image validation provides compatibility feedback:
 # ✅ Linux platform detected
@@ -172,193 +172,3 @@ Use any Linux-based Docker image with validation:
 ```
 
 ## Configuration Management
-
-### Project-Specific Settings
-Each project directory can have custom preferences saved in `.claude-reactor`:
-
-```bash
-# Example .claude-reactor file (auto-created)
-image=go
-danger=true
-account=work
-```
-
-### Global Account Configuration
-Account configurations stored in `~/.claude-reactor/`:
-
-```
-~/.claude-reactor/
-├── .default-claude.json      # Default account OAuth config
-├── .work-claude.json         # Work account OAuth config  
-├── .personal-claude.json     # Personal account OAuth config
-├── .default-claude/          # Default account Claude CLI state
-├── .work-claude/             # Work account Claude CLI state
-└── image-cache/              # Docker image validation cache
-```
-
-## Common Workflows
-
-### Team Development Setup
-
-```bash
-# Set up work environment
-cd /path/to/work/project
-./claude-reactor run --account work --image go
-
-# Set up personal environment  
-cd /path/to/personal/project
-./claude-reactor run --account personal --image base
-
-# Each has isolated containers, configs, and authentication
-```
-
-### Multi-Language Project
-
-```bash
-cd /path/to/fullstack/project
-
-# Use full image for comprehensive tooling
-./claude-reactor run --image full
-
-# Container includes: Go, Rust, Java, Node.js, Python, databases
-# Auto-detects project type and provides relevant tooling
-```
-
-### Custom Enterprise Environment
-
-```bash
-# Use company-specific development image
-./claude-reactor run --image enterprise-registry.com/dev-env:v2.1
-
-# System validates compatibility and shows tool analysis:
-# ✅ Compatible with claude-reactor
-# 📦 Available tools: git, curl, jq, docker
-# ⚠️ Missing: ripgrep, fzf (non-critical)
-```
-
-## Project Templates and Scaffolding
-
-Generate new projects with intelligent defaults:
-
-```bash
-# Interactive project creation
-./claude-reactor template init
-
-# Direct project creation from templates
-./claude-reactor template new go-api my-api
-./claude-reactor template new rust-cli my-cli
-./claude-reactor template new node-webapp my-webapp
-```
-
-## Command Reference
-
-### Core Commands
-
-```bash
-# Container management
-./claude-reactor                         # Start Claude CLI (smart defaults)
-./claude-reactor run --shell             # Launch bash shell instead
-./claude-reactor run --danger            # Skip Claude CLI permissions dialog
-./claude-reactor config show             # Display current configuration
-
-# Image and account management  
-./claude-reactor run --image go          # Use Go development image
-./claude-reactor run --account work      # Switch to work account
-./claude-reactor clean                   # Remove current project container
-./claude-reactor clean --all             # Remove all containers
-
-# Development tools
-./claude-reactor devcontainer generate   # Create VS Code dev container
-./claude-reactor template init           # Interactive project scaffolding
-./claude-reactor debug cache info        # Show image validation cache
-```
-
-## Installation
-
-### Option 1: Pre-built Binaries (Recommended)
-
-```bash
-# Build and auto-install (detects best method for your OS)
-make build && ./INSTALL
-
-# Specific installation methods:
-make build && ./INSTALL --local    # ~/bin (recommended for macOS)  
-make build && ./INSTALL --system   # /usr/local/bin (good for Linux)
-
-# Or use Makefile shortcut
-make build install                  # Auto-detection
-```
-
-### Option 2: Build from Source
-
-```bash
-# Clone and build
-git clone <repository>
-cd claude-reactor
-make build
-
-# Install to system PATH (optional)
-./INSTALL
-
-# Or use directly without installing
-./dist/claude-reactor-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) --help
-```
-
-**The INSTALL script will:**
-- **Auto-detect** the best installation method for your OS
-- **macOS**: Install to `~/bin` (avoids Gatekeeper security issues)
-- **Linux**: Install to `/usr/local/bin` (system-wide access)  
-- Make it executable and handle macOS security restrictions
-- Provide PATH setup instructions when needed
-
-**Supported Platforms:**
-- Linux: x86_64, arm64
-- macOS: x86_64, arm64 (Apple Silicon)
-
-**To uninstall:** `./INSTALL --uninstall`
-
-## Troubleshooting
-
-### Common Issues
-
-**Authentication Problems:**
-```bash
-# Force interactive login for new account
-./claude-reactor run --account newaccount --interactive-login
-
-# Check authentication status
-./claude-reactor config show
-```
-
-**Container Issues:**
-```bash
-# Clean and rebuild
-./claude-reactor clean && ./claude-reactor build go
-
-# Check Docker daemon
-docker info
-```
-
-**Custom Image Problems:**
-```bash
-# Check image validation details
-./claude-reactor debug image your-image:tag
-
-# Clear validation cache
-./claude-reactor debug cache clear
-```
-
-## Architecture
-
-Claude-Reactor uses a modular Go architecture with:
-
-- **Account Isolation**: Complete separation of Claude configurations and containers
-- **Image Validation**: Automatic compatibility checking for custom Docker images  
-- **Project Detection**: Smart detection of project types for optimal tooling
-- **Mount Management**: Secure mounting of configs, projects, and additional directories
-- **Template System**: Language-specific project scaffolding with best practices
-
-**File Structure:**
-- Configuration: `.claude-reactor` (per project), `~/.claude-reactor/` (global)
-- Containers: Named with account and project isolation
-- Validation Cache: `~/.claude-reactor/image-cache/` (digest-based, 30-day expiry)
