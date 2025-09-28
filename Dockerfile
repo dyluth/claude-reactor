@@ -216,7 +216,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 
 # Install database clients
 RUN apt-get update && apt-get install -y \
-    mysql-client \
+    default-mysql-client \
     postgresql-client \
     redis-tools \
     sqlite3 \

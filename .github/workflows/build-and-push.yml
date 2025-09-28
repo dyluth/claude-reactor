@@ -81,9 +81,9 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Test image
-      if: github.event_name == 'pull_request'
+      if: github.event_name != 'pull_request'
       run: |
-        docker run --rm --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.event.pull_request.head.sha }} claude --version
+        docker run --rm --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.sha }} claude --version
 
   integration-test:
     needs: build-and-push
