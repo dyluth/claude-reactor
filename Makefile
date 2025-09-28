@@ -339,7 +339,6 @@ go-deps: ## Download Go dependencies
 .PHONY: dev-setup
 dev-setup: ## Set up development environment
 	@echo "$(BLUE)Setting up development environment...$(NC)"
-	@chmod +x claude-reactor
 	@chmod +x tests/*.sh
 	@chmod +x tests/*/*.sh
 	@make go-deps
