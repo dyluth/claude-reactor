@@ -144,13 +144,20 @@ func (m *manager) IsAuthenticated(account string) bool {
 	return true
 }
 
-// GetAccountConfigPath returns path to account-specific config directory
+// GetAccountConfigPath returns path to account-specific config file
 func (m *manager) GetAccountConfigPath(account string) string {
 	normalizedAccount := normalizeAccount(account)
 	if normalizedAccount == "default" {
 		return filepath.Join(m.claudeReactorDir, ".default-claude.json")
 	}
 	return filepath.Join(m.claudeReactorDir, fmt.Sprintf(".%s-claude.json", normalizedAccount))
+}
+
+// GetAccountSessionDir returns path to account-specific Claude session directory
+// This directory contains all Claude CLI session data: projects/, shell-snapshots/, todos/, etc.
+func (m *manager) GetAccountSessionDir(account string) string {
+	normalizedAccount := normalizeAccount(account)
+	return filepath.Join(m.claudeReactorDir, normalizedAccount)
 }
 
 // SaveAPIKey saves API key to project-specific file

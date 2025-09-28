@@ -210,15 +210,24 @@ func (mm *MountManager) createClaudeConfigMounts(account string) ([]pkg.Mount, e
 			mm.logger.Debugf("Added account-specific Claude config: %s", account)
 		}
 		
-		// Check for account-specific .claude directory
-		if _, err := os.Stat(claudeDotDir); err == nil {
-			mounts = append(mounts, pkg.Mount{
-				Source: claudeDotDir,
-				Target: "/home/claude/.claude",
-				Type:   "bind",
-				ReadOnly: false,
-			})
+		// Always mount account-specific .claude directory (create if it doesn't exist)
+		if _, err := os.Stat(claudeDotDir); os.IsNotExist(err) {
+			// Create the directory if it doesn't exist
+			if err := os.MkdirAll(claudeDotDir, 0755); err != nil {
+				mm.logger.Warnf("Failed to create account-specific .claude directory: %v", err)
+			} else {
+				mm.logger.Debugf("Created missing account-specific .claude directory: %s", claudeDotDir)
+			}
 		}
+		
+		// Always add the mount for account-specific .claude directory (now that it exists)
+		mounts = append(mounts, pkg.Mount{
+			Source: claudeDotDir,
+			Target: "/home/claude/.claude",
+			Type:   "bind",
+			ReadOnly: false,
+		})
+		mm.logger.Debugf("Added account-specific .claude directory mount: %s", account)
 	} else {
 		// Default account - use main Claude directories
 		claudeJSON := filepath.Join(homeDir, ".claude.json")
@@ -235,16 +244,24 @@ func (mm *MountManager) createClaudeConfigMounts(account string) ([]pkg.Mount, e
 			mm.logger.Debugf("Added main Claude config file")
 		}
 		
-		// Check for main .claude directory
-		if _, err := os.Stat(claudeDotDir); err == nil {
-			mounts = append(mounts, pkg.Mount{
-				Source: claudeDotDir,
-				Target: "/home/claude/.claude",
-				Type:   "bind",
-				ReadOnly: false,
-			})
-			mm.logger.Debugf("Added main .claude directory")
+		// Always mount .claude directory (create if it doesn't exist)
+		if _, err := os.Stat(claudeDotDir); os.IsNotExist(err) {
+			// Create the directory if it doesn't exist
+			if err := os.MkdirAll(claudeDotDir, 0755); err != nil {
+				mm.logger.Warnf("Failed to create .claude directory: %v", err)
+			} else {
+				mm.logger.Debugf("Created missing .claude directory: %s", claudeDotDir)
+			}
 		}
+		
+		// Always add the mount for .claude directory (now that it exists)
+		mounts = append(mounts, pkg.Mount{
+			Source: claudeDotDir,
+			Target: "/home/claude/.claude",
+			Type:   "bind",
+			ReadOnly: false,
+		})
+		mm.logger.Debugf("Added main .claude directory mount")
 	}
 	
 	return mounts, nil

@@ -1242,7 +1242,7 @@ func (m *manager) StartOrRecoverContainer(ctx context.Context, config *pkg.Conta
 		return m.StartContainer(ctx, config)
 	}
 
-	// Try to recover existing container
+	// Try to recover existing container by saved ContainerID
 	if sessionConfig.ContainerID != "" {
 		healthy, err := m.IsContainerHealthy(ctx, sessionConfig.ContainerID)
 		if err != nil {
@@ -1256,10 +1256,37 @@ func (m *manager) StartOrRecoverContainer(ctx context.Context, config *pkg.Conta
 			m.logger.Infof("🔄 Recovering existing session: %s", displaySessionID)
 			return sessionConfig.ContainerID, nil
 		}
-		m.logger.Info("Previous container unhealthy, creating new one")
+		m.logger.Info("Previous container unhealthy, checking for container by name")
 	}
 
-	// Start new container
+	// Try to recover existing container by name (in case ContainerID was lost but container still exists)
+	status, err := m.GetContainerStatus(ctx, config.Name)
+	if err != nil {
+		m.logger.Debugf("Failed to check container status by name: %v", err)
+	} else if status.Exists {
+		if status.Running {
+			m.logger.Infof("🔄 Found existing running container: %s", config.Name)
+			// Update session config with the found container ID
+			sessionConfig.ContainerID = status.ID
+			return status.ID, nil
+		} else {
+			m.logger.Infof("🔄 Found existing stopped container, starting it: %s", config.Name)
+			// Start the existing container
+			if err := m.client.ContainerStart(ctx, status.ID, container.StartOptions{}); err != nil {
+				m.logger.Warnf("Failed to start existing container: %v", err)
+				// Remove the problematic container and create a new one
+				m.logger.Info("Removing problematic container to create fresh one")
+				m.client.ContainerRemove(ctx, status.ID, container.RemoveOptions{Force: true})
+			} else {
+				m.logger.Infof("✅ Successfully started existing container: %s", config.Name)
+				// Update session config with the container ID
+				sessionConfig.ContainerID = status.ID
+				return status.ID, nil
+			}
+		}
+	}
+
+	// Start new container (no existing container found or existing one was problematic)
 	containerID, err := m.StartContainer(ctx, config)
 	if err != nil {
 		return "", err

@@ -26,6 +26,8 @@ The new central component will be the **Reactor-Fabric Orchestrator**, a new Go 
 
 Currently, claude-reactor operates on a single-container model. A user interacts with one Claude instance within one Docker container at a time. While powerful, this architecture limits tasks to the context window and capabilities of a single agent. There is no native mechanism for coordinating multiple, specialised claude-reactor instances or other MCP-based tools in a collaborative fashion.
 
+**Session Persistence Enhancement**: As of the latest implementation, claude-reactor now supports **session persistence for interactive mode**. This allows developers to maintain continuous sessions across container restarts and machine reboots, while preserving the ephemeral nature required for MCP server mode.
+
 ## **context & problem definition**
 
 ### **problem statement**
@@ -43,6 +45,8 @@ Sophisticated software development tasks (e.g., building a full-stack feature, r
 ## **technical requirements**
 
 ### **functional requirements**
+
+* \[✅\] **Session Persistence for Interactive Mode**: Claude-reactor now supports persistent sessions for interactive development workflows. When `session_persistence=true` is set in `.claude-reactor`, the system will attempt to recover existing containers across restarts, maintaining development context and authentication state. This is distinct from MCP mode, which maintains ephemeral, fresh containers per service request.
 
 * \[ \] **Backward Compatibility**: The existing single-container functionality of claude-reactor must remain completely unchanged and fully operational. The reactor-fabric orchestration is a purely additive feature. The claude-reactor binary must not have a hard dependency on the reactor-fabric orchestrator and must function perfectly when it is not present.  
 * \[ \] The **Reactor-Fabric Orchestrator** must be implemented as a standalone Go CLI application.  
@@ -398,6 +402,35 @@ N/A for the initial release. The additive nature of the feature means users can 
 **Discovery**: Environment variable `REACTOR_FABRIC_ENDPOINT` for orchestrator location. If unset, operates in standalone mode.
 
 **Graceful Fallback**: If `REACTOR_FABRIC_ENDPOINT` is set but orchestrator unavailable, claude-reactor prints warning ("Warning: Could not connect to Reactor-Fabric at [endpoint]. Falling back to standalone mode.") and continues normally.
+
+### **Session Persistence Architecture**
+
+**Interactive vs MCP Mode Distinction**: The system now distinguishes between two operational modes:
+
+- **Interactive Mode** (`./claude-reactor`): Persistent sessions for continuous development
+- **MCP Server Mode** (Reactor-Fabric): Ephemeral containers for service isolation
+
+**Session Persistence Configuration**:
+```bash
+# .claude-reactor file format
+variant=go
+danger=true
+session_persistence=true          # Enable session recovery
+last_session_id=abc123def456      # Track current session
+container_id=claude-reactor-go-default-abc123  # Container to recover
+```
+
+**Recovery Logic**:
+1. **Container Health Check**: Verify existing container is running and responsive
+2. **Session Recovery**: Reconnect to healthy containers with preserved state
+3. **Graceful Fallback**: Create new container if recovery fails
+4. **Session Tracking**: Generate unique session IDs for persistent workflows
+
+**Benefits**:
+- **Developer Experience**: Resume work exactly where you left off after reboots
+- **Authentication Preservation**: Maintain Claude CLI login state across restarts
+- **Context Continuity**: Preserve command history and environment variables
+- **Selective Persistence**: Opt-in via configuration, maintaining backward compatibility
 
 ### **Security Implementation**
 

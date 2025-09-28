@@ -127,6 +127,16 @@ func (m *MockDockerManager) GetClient() *client.Client {
 	return args.Get(0).(*client.Client)
 }
 
+func (m *MockDockerManager) IsContainerHealthy(ctx context.Context, containerID string) (bool, error) {
+	args := m.Called(ctx, containerID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockDockerManager) StartOrRecoverContainer(ctx context.Context, config *pkg.ContainerConfig, sessionConfig *pkg.Config) (string, error) {
+	args := m.Called(ctx, config, sessionConfig)
+	return args.String(0), args.Error(1)
+}
+
 func TestNewRecoveryManager(t *testing.T) {
 	mockLogger := &MockLogger{}
 	mockDockerMgr := &MockDockerManager{}
