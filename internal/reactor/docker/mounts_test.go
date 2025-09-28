@@ -304,11 +304,30 @@ func TestMountManager_CreateClaudeConfigMounts(t *testing.T) {
 		mounts, err := mm.createClaudeConfigMounts("work")
 		
 		assert.NoError(t, err)
-		assert.Len(t, mounts, 1) // Only account-specific .claude.json
+		assert.Len(t, mounts, 2) // Account-specific .claude.json and .claude directory
 		
-		mount := mounts[0]
-		assert.Equal(t, accountClaudeJSON, mount.Source)
-		assert.Equal(t, "/home/claude/.claude.json", mount.Target)
+		// Check .claude.json mount
+		found := false
+		for _, mount := range mounts {
+			if mount.Target == "/home/claude/.claude.json" {
+				assert.Equal(t, accountClaudeJSON, mount.Source)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Should mount account-specific .claude.json")
+		
+		// Check .claude directory mount
+		found = false
+		accountClaudeDir := filepath.Join(reactorDir, ".work-claude")
+		for _, mount := range mounts {
+			if mount.Target == "/home/claude/.claude" {
+				assert.Equal(t, accountClaudeDir, mount.Source)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Should mount account-specific .claude directory")
 	})
 }
 

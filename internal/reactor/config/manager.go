@@ -24,9 +24,48 @@ func NewManager(logger pkg.Logger) pkg.ConfigManager {
 
 // LoadConfig loads configuration from file or creates default
 func (m *manager) LoadConfig() (*pkg.Config, error) {
-	// TODO: Implement YAML configuration loading
-	m.logger.Debug("Loading configuration (stub implementation)")
-	return m.GetDefaultConfig(), nil
+	config := m.GetDefaultConfig()
+	
+	// Try to read .claude-reactor file
+	if data, err := os.ReadFile(".claude-reactor"); err == nil {
+		// Parse bash-style config file
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			
+			switch key {
+			case "variant":
+				config.Variant = value
+			case "account":
+				config.Account = value
+			case "danger":
+				config.DangerMode = value == "true"
+			case "session_persistence":
+				config.SessionPersistence = value == "true"
+			case "last_session_id":
+				config.LastSessionID = value
+			case "container_id":
+				config.ContainerID = value
+			}
+		}
+		
+		m.logger.Debug("Configuration loaded from .claude-reactor file")
+	} else {
+		m.logger.Debug("No .claude-reactor file found, using defaults")
+	}
+	
+	return config, nil
 }
 
 // SaveConfig persists configuration to file
@@ -47,8 +86,17 @@ func (m *manager) SaveConfig(config *pkg.Config) error {
 	if config.DangerMode {
 		fmt.Fprintf(file, "danger=true\n")
 	}
+	if config.SessionPersistence {
+		fmt.Fprintf(file, "session_persistence=true\n")
+	}
+	if config.LastSessionID != "" {
+		fmt.Fprintf(file, "last_session_id=%s\n", config.LastSessionID)
+	}
+	if config.ContainerID != "" {
+		fmt.Fprintf(file, "container_id=%s\n", config.ContainerID)
+	}
 	
-	m.logger.Infof("Configuration saved: variant=%s, account=%s", config.Variant, config.Account)
+	m.logger.Infof("Configuration saved: variant=%s, account=%s, session_persistence=%t", config.Variant, config.Account, config.SessionPersistence)
 	return nil
 }
 
