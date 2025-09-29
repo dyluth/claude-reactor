@@ -16,10 +16,14 @@ import (
 func NewHotReloadCmd(app *pkg.AppContainer) *cobra.Command {
 	var hotReloadCmd = &cobra.Command{
 		Use:   "hotreload",
-		Short: "Hot reload functionality for faster development cycles",
-		Long: `Hot reload provides automatic file watching, building, and container synchronization
+		Short: "🚧 Hot reload functionality (IN DEVELOPMENT) for faster development cycles",
+		Long: `🚧 IN DEVELOPMENT: Hot reload provides automatic file watching, building, and container synchronization
 for faster development cycles. Changes to your project files are automatically detected,
 built (if needed), and synchronized with the running container.
+
+⚠️  CURRENT STATUS: File watching and project detection are fully implemented, but build
+execution and container synchronization are still in development. Currently provides
+sophisticated file monitoring without automated builds.
 
 This feature supports multiple project types including Go, Node.js, Python, Rust, and Java.`,
 	}
@@ -38,13 +42,16 @@ This feature supports multiple project types including Go, Node.js, Python, Rust
 	// Start command
 	var hotReloadStartCmd = &cobra.Command{
 		Use:   "start [project-path]",
-		Short: "Start hot reload for a project",
-		Long: `Start hot reload monitoring for a project. This will:
+		Short: "🚧 Start hot reload monitoring (file watching only)",
+		Long: `🚧 IN DEVELOPMENT: Start hot reload monitoring for a project. Currently implemented:
 
-1. Auto-detect the project type (Go, Node.js, Python, etc.)
-2. Set up file watching with appropriate patterns
-3. Configure build triggers for the detected language
-4. Start container synchronization for fast file updates
+✅ 1. Auto-detect the project type (Go, Node.js, Python, etc.)
+✅ 2. Set up file watching with appropriate patterns
+⚠️  3. Configure build triggers (detected but not executed)
+⚠️  4. Container synchronization (not yet implemented)
+
+⚠️  LIMITATION: Currently provides file change detection and project analysis only.
+Build automation and container sync are still in development.
 
 If no project path is specified, the current directory is used.`,
 		Args: cobra.MaximumNArgs(1),
@@ -74,7 +81,8 @@ If no project path is specified, the current directory is used.`,
 				}
 			}
 
-			fmt.Printf("🔥 Starting hot reload for project: %s\n", projectPath)
+			fmt.Printf("🚧 Starting hot reload monitoring (IN DEVELOPMENT) for project: %s\n", projectPath)
+			fmt.Printf("⚠️  Note: Build automation not yet implemented - file watching only\n")
 
 			// Determine container ID
 			containerID := hotReloadContainerFlag
@@ -174,13 +182,13 @@ If no project path is specified, the current directory is used.`,
 	// Stop command
 	var hotReloadStopCmd = &cobra.Command{
 		Use:   "stop <session-id>",
-		Short: "Stop an active hot reload session",
-		Long: `Stop an active hot reload session by its ID. This will:
+		Short: "🚧 Stop an active hot reload monitoring session",
+		Long: `🚧 IN DEVELOPMENT: Stop an active hot reload session by its ID. Currently stops:
 
-1. Stop file watching
-2. Stop build triggers
-3. Stop container synchronization
-4. Clean up session resources
+✅ 1. File watching
+⚠️  2. Build triggers (not yet implemented)
+⚠️  3. Container synchronization (not yet implemented)
+✅ 4. Session resource cleanup
 
 Use 'hotreload list' to see active sessions and their IDs.`,
 		Args: cobra.ExactArgs(1),
@@ -203,8 +211,10 @@ Use 'hotreload list' to see active sessions and their IDs.`,
 	// Status command
 	var hotReloadStatusCmd = &cobra.Command{
 		Use:   "status [session-id]",
-		Short: "Show hot reload status",
-		Long: `Show detailed status information for hot reload sessions.
+		Short: "🚧 Show hot reload monitoring status",
+		Long: `🚧 IN DEVELOPMENT: Show detailed status information for hot reload sessions.
+
+⚠️  Note: Build and sync status fields show placeholders as those features are not yet implemented.
 
 If a session ID is provided, shows detailed status for that specific session.
 If no session ID is provided, shows a summary of all active sessions.`,
@@ -218,7 +228,7 @@ If no session ID is provided, shows a summary of all active sessions.`,
 					return fmt.Errorf("failed to get hot reload status: %w", err)
 				}
 
-				fmt.Print("🔥 Hot Reload Session Status\n")
+				fmt.Print("🚧 Hot Reload Monitoring Status (IN DEVELOPMENT)\n")
 				fmt.Printf("📋 Session ID: %s\n", status.SessionID)
 				fmt.Printf("📊 Status: %s\n", status.Status)
 				fmt.Printf("👀 Watching: %s\n", status.WatchingStatus)
@@ -293,9 +303,11 @@ If no session ID is provided, shows a summary of all active sessions.`,
 	// List command (alias for status with no args)
 	var hotReloadListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List all hot reload sessions",
-		Long: `List all active hot reload sessions with their IDs, project paths,
-container information, and current status.`,
+		Short: "🚧 List all hot reload monitoring sessions",
+		Long: `🚧 IN DEVELOPMENT: List all active hot reload sessions with their IDs, project paths,
+container information, and current status.
+
+⚠️  Note: Build and sync status show placeholders as those features are not yet implemented.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return hotReloadStatusCmd.RunE(cmd, []string{}) // Reuse the status command logic
 		},
@@ -304,11 +316,11 @@ container information, and current status.`,
 	// Config command
 	var hotReloadConfigCmd = &cobra.Command{
 		Use:   "config <session-id>",
-		Short: "Update hot reload configuration",
-		Long: `Update the configuration for an active hot reload session.
+		Short: "🚧 Update hot reload configuration (file watching only)",
+		Long: `🚧 IN DEVELOPMENT: Update the configuration for an active hot reload session.
 
-This allows you to modify watching patterns, build settings, and sync options
-without stopping and restarting the session.`,
+✅ Currently allows modification of: File watching patterns, ignore patterns, debounce settings
+⚠️  Build and sync options are not yet implemented.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := args[0]

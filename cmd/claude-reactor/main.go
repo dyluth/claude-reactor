@@ -31,145 +31,37 @@ func main() {
 func Execute() error {
 	ctx := context.Background()
 
-	// Create root command with lazy initialization
-	rootCmd := newRootCmdWithLazyInit()
-	return rootCmd.ExecuteContext(ctx)
-}
-
-// newRootCmdWithLazyInit creates the root command with lazy application initialization
-func newRootCmdWithLazyInit() *cobra.Command {
-	var app *pkg.AppContainer
-
-	var rootCmd = &cobra.Command{
-		Use:   "claude-reactor",
-		Short: "Claude CLI in Docker - Modern containerization for Claude development",
-		Long: `Claude-Reactor provides a professional, modular Docker containerization system
-for Claude CLI development workflows. It transforms the basic Claude CLI into a
-comprehensive development environment with intelligent automation, multi-language
-support, and production-ready tooling.`,
-		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildDate),
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize application only when actually running a command
-			debug, _ := cmd.Flags().GetBool("debug")
-			verbose, _ := cmd.Flags().GetBool("verbose")
-			logLevel, _ := cmd.Flags().GetString("log-level")
-
-			var err error
-			app, err = reactor.NewAppContainer(debug, verbose, logLevel)
-			if err != nil {
-				return fmt.Errorf("failed to initialize application: %w", err)
-			}
-
-			// Update all commands to use the initialized app
-			updateCommandsWithApp(cmd, app)
-			return nil
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			// Handle deprecated flags with clear migration guidance
-
-			if listVariants, _ := cmd.Flags().GetBool("list-variants"); listVariants {
-				fmt.Fprintf(os.Stderr, "❌ The --list-variants flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor debug info\n")
-				os.Exit(1)
-			}
-
-			if variant, _ := cmd.Flags().GetString("variant"); variant != "" {
-				fmt.Fprintf(os.Stderr, "❌ The --variant flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor run --image %s\n", variant)
-				os.Exit(1)
-			}
-
-			if showConfig, _ := cmd.Flags().GetBool("show-config"); showConfig {
-				fmt.Fprintf(os.Stderr, "❌ The --show-config flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor config show\n")
-				os.Exit(1)
-			}
-
-			// Default action - if config exists, run; otherwise show help
-			config, err := app.ConfigMgr.LoadConfig()
-			if err == nil && (config.Variant != "" || config.Account != "") {
-				// Configuration exists, default to run command
-				app.Logger.Info("🚀 Found existing configuration, running container...")
-				runCmd := commands.NewRunCmd(app)
-				if runErr := runCmd.RunE(cmd, args); runErr != nil {
-					cmd.PrintErrf("Run failed: %v\n", runErr)
-					os.Exit(1)
-				}
-				return
-			}
-
-			// No configuration found, show help
-			cmd.Help()
-		},
-	}
-
-	// Global flags
-	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().String("log-level", "info", "Set log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug mode")
-
-	// Deprecated flags (hidden, show clear migration error)
-	rootCmd.Flags().Bool("list-variants", false, "Removed: use 'debug info'")
-	rootCmd.Flags().Bool("show-config", false, "Removed: use 'config show'")
-	rootCmd.Flags().String("variant", "", "Removed: use 'run --image'")
-	rootCmd.Flags().MarkHidden("list-variants")
-	rootCmd.Flags().MarkHidden("show-config")
-	rootCmd.Flags().MarkHidden("variant")
-
-	// Set version information for commands that need it
-	commands.SetVersionInfo(Version, GitCommit, BuildDate)
-
-	// Add placeholder subcommands that will be updated with the app once initialized
-	addPlaceholderCommands(rootCmd)
-
-	return rootCmd
-}
-
-// updateCommandsWithApp updates all commands to use the initialized app
-func updateCommandsWithApp(rootCmd *cobra.Command, app *pkg.AppContainer) {
-	// Remove placeholder commands
-	rootCmd.RemoveCommand(rootCmd.Commands()...)
-
-	// Add real commands with the initialized app
-	rootCmd.AddCommand(
-		commands.NewRunCmd(app),
-		commands.NewBuildCmd(app),
-		commands.NewConfigCmd(app),
-		commands.NewCleanCmd(app),
-		commands.NewDevContainerCmd(app),
-		commands.NewTemplateCmd(app),
-		commands.NewDependencyCmd(app),
-		commands.NewHotReloadCmd(app),
-		commands.NewDebugCmd(app),
-		commands.NewCompletionCmd(app),
-	)
-}
-
-// addPlaceholderCommands adds placeholder commands for help text before app initialization
-func addPlaceholderCommands(rootCmd *cobra.Command) {
-	placeholderCmd := func(use, short string) *cobra.Command {
-		return &cobra.Command{
-			Use:   use,
-			Short: short,
-			Run: func(cmd *cobra.Command, args []string) {
-				fmt.Fprintf(os.Stderr, "Command requires initialization. Run without --help for full functionality.\n")
-			},
+	// Special case: if user just wants help, create command without app initialization
+	for _, arg := range os.Args[1:] {
+		if arg == "--help" || arg == "-h" || arg == "help" {
+			rootCmd := newRootCmd(nil) // Create with nil app for help
+			return rootCmd.ExecuteContext(ctx)
 		}
 	}
 
-	rootCmd.AddCommand(
-		placeholderCmd("run", "Run Claude CLI in a Docker container"),
-		placeholderCmd("build", "Build container images"),
-		placeholderCmd("config", "Manage configuration"),
-		placeholderCmd("clean", "Clean up containers and images"),
-		placeholderCmd("devcontainer", "Generate VS Code development container configuration"),
-		placeholderCmd("template", "Manage project templates"),
-		placeholderCmd("dependency", "Manage project dependencies"),
-		placeholderCmd("hotreload", "Enable hot reload for development"),
-		placeholderCmd("debug", "Debug and troubleshooting commands"),
-		placeholderCmd("completion", "Generate shell completion scripts"),
-	)
+	// Parse flags to get debug/verbose/log-level for app initialization
+	tempCmd := &cobra.Command{Use: "claude-reactor"}
+	tempCmd.PersistentFlags().Bool("debug", false, "Enable debug mode")
+	tempCmd.PersistentFlags().Bool("verbose", false, "Enable verbose output")
+	tempCmd.PersistentFlags().String("log-level", "info", "Set log level")
+	tempCmd.ParseFlags(os.Args[1:])
+
+	debug, _ := tempCmd.PersistentFlags().GetBool("debug")
+	verbose, _ := tempCmd.PersistentFlags().GetBool("verbose")
+	logLevel, _ := tempCmd.PersistentFlags().GetString("log-level")
+
+	// Initialize app upfront with parsed flags
+	app, err := reactor.NewAppContainer(debug, verbose, logLevel)
+	if err != nil {
+		return fmt.Errorf("failed to initialize application: %w", err)
+	}
+
+	// Create root command with initialized app
+	rootCmd := newRootCmd(app)
+	return rootCmd.ExecuteContext(ctx)
 }
+
+
 
 func newRootCmd(app *pkg.AppContainer) *cobra.Command {
 	var rootCmd = &cobra.Command{
