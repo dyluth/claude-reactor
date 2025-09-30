@@ -9,11 +9,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Primary Use Case**: Secure, isolated Claude CLI execution with proper account separation and container-based development environments.
 
 **Key Value Propositions**:
-- **Account Isolation**: Each Claude account gets separate containers and configuration
+- **Complete Account Isolation**: Each Claude account gets separate credentials, sessions, and containers
+- **Persistent Authentication**: No re-login required when restarting containers
+- **Project-Specific Sessions**: Isolated conversation history per project/account combination
+- **Smart Container Management**: Intelligent reuse vs recreation based on command arguments
 - **Multiple Variants**: Pre-built images for different development stacks (base, go, full, cloud, k8s)
 - **Security First**: Non-root execution and proper permission handling
-- **Simple Configuration**: Minimal setup with sensible defaults
-- **Build Automation**: Use the Makefile for all build and development operations
+- **Simple Configuration**: Minimal setup with sensible defaults and auto-detection
+- **Comprehensive Management**: List and clean commands for complete visibility and control
 
 ## Project Architecture
 
@@ -34,8 +37,10 @@ This project creates a modular Docker containerization system for Claude CLI wit
 
 ### **Smart Configuration:**
 - **Auto-detection**: Detects project type (go.mod → go variant, etc.)
-- **Persistent preferences**: `.claude-reactor` file saves variant choice
-- **Danger mode persistence**: Remembers `--danger` flag preference per project
+- **Account Defaults**: Uses `$USER` environment variable as default account, fallback to "user"
+- **Project Sessions**: Each project gets isolated session directory with conversation history
+- **Smart Container Lifecycle**: Reuse containers when no args, recreate when args provided
+- **Persistent preferences**: Configuration saved in project-specific session directories
 - **Registry-first**: Attempts to pull from ghcr.io, falls back to local builds
 - **Development mode**: `--dev` flag forces local builds for development
 
@@ -71,26 +76,43 @@ claude-reactor/
 └── .claude-reactor            # Auto-generated project configuration
 ```
 
-## Authentication Methods
+## Account Isolation and Authentication
 
-The project supports multiple authentication approaches with account isolation:
+The project provides complete account isolation with persistent authentication and project-specific sessions:
 
-### **Account-Specific Authentication (Recommended)**
-Each Claude account gets its own isolated configuration:
-- **Default account**: When no account is specified in `.claude-reactor`
-  - Uses: `~/.claude-reactor/.default-claude.json`
-  - Container: `claude-reactor-*-default`
-  - API key: `.claude-reactor-env` (if used)
+### **Account Structure**
+Each Claude account gets completely isolated configuration and session data:
 
-- **Named accounts**: When `account=name` is specified in `.claude-reactor`
-  - Uses: `~/.claude-reactor/.name-claude.json`
-  - Container: `claude-reactor-*-name`
-  - API key: `.claude-reactor-name-env` (if used)
+```
+~/.claude-reactor/
+├── {account}/                              # Account-specific session data
+│   ├── {project-name}-{project-hash}/      # Project-specific sessions
+│   │   ├── .claude-reactor                 # Project config
+│   │   ├── projects/                       # Claude conversation history
+│   │   ├── shell-snapshots/               # Shell session data
+│   │   └── todos/                         # Project todos
+│   └── another-project-{hash}/
+├── .{account}-claude.json                  # Account-specific Claude config
+├── .claude-reactor-{account}-env           # Account-specific API keys (optional)
+└── .default-claude.json                   # Default account config
+```
+
+### **Default Account Logic**
+- **Default account**: Uses `$USER` environment variable (e.g., "john", "alice")
+- **Fallback**: Uses "user" if `$USER` is not available
+- **Container naming**: `claude-reactor-{variant}-{arch}-{project-hash}-{account}`
+- **Session isolation**: Each project/account combo gets separate conversation history
 
 ### **Authentication Methods**
-- **OAuth (Recommended)**: Uses existing Claude CLI authentication from config files
-- **API Key**: Via project-specific environment files (`claude-reactor --apikey YOUR_KEY`)
-- **Interactive UI**: Direct login through Claude CLI (use `--interactive-login`)
+- **OAuth (Recommended)**: Persistent authentication across container restarts
+- **API Key**: Via account-specific environment files (`claude-reactor --apikey YOUR_KEY`)
+- **Interactive Login**: Use `--interactive-login` for first-time setup
+
+### **Authentication Persistence**
+✅ **Fixed**: Authentication now persists across container restarts
+- Account-specific Claude config files are properly mounted
+- No re-login required when restarting containers for same account
+- Each account maintains separate OAuth tokens and project settings
 
 ## Build Operations
 
@@ -120,60 +142,105 @@ The Makefile provides professional build automation with 25+ targets covering al
 
 ## Development Workflows
 
-### **Primary Development Workflow (Recommended)**
+### **Smart Container Management (New)**
+Claude-reactor now features intelligent container lifecycle management:
+
 ```bash
-# Smart container management - auto-detects project type
-claude-reactor                      # Launch Claude CLI directly (uses saved config)
-claude-reactor run --image go       # Set specific container image and save preference
-claude-reactor run --shell          # Launch bash shell instead of Claude CLI
-claude-reactor run --danger         # Launch Claude CLI with --dangerously-skip-permissions
-claude-reactor config show          # Check current configuration
-claude-reactor debug info           # See all available options
+# Smart reuse - containers are automatically reused when no arguments passed
+claude-reactor                      # Reuses existing container for this project/account
+claude-reactor run                  # Same as above - reuses existing container
+
+# Force recreation - any arguments force container recreation  
+claude-reactor run --image go       # Recreates container with go variant
+claude-reactor run --shell          # Recreates container, launches shell instead of Claude
+claude-reactor run --danger         # Recreates container with danger mode
+claude-reactor run --account work   # Recreates container for work account
+
+# Container conflict resolution is automatic - no more "container name already in use" errors
 ```
 
-### **Multi-Account Workflow**
+### **Multi-Account Workflows**
+
+#### **Default Account (Automatic)**
 ```bash
-# Default account usage (no account specified)
-claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
+# Uses your username as account (e.g., if $USER=john, account=john)
+claude-reactor                    # Uses account "john", isolated session/auth
+cd ~/my-project && claude-reactor  # Separate session for this project under "john" account
+```
 
-# Work account usage
-claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
-claude-reactor config show      # Shows: Account: work
+#### **Named Account Usage**
+```bash
+# Work account setup
+claude-reactor --account work     # Sets up work account isolation
+claude-reactor config show       # Shows current account and project info
 
-# Personal account usage  
-claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
+# Personal account setup  
+claude-reactor --account personal # Completely separate from work account
 
-# Account-specific API key (optional)
-claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
+# Account-specific API key setup
+claude-reactor --account work --apikey sk-ant-xxx  # Account-specific credentials
 
-# Switch between accounts in different projects
-cd ~/work-project && claude-reactor  # Uses work account if saved in .claude-reactor
-cd ~/personal-project && claude-reactor  # Uses personal account if saved in .claude-reactor
+# Switch between accounts across projects
+cd ~/work-project
+claude-reactor --account work     # Work account, work project session
+
+cd ~/personal-project  
+claude-reactor --account personal # Personal account, personal project session
+```
+
+#### **Project Session Isolation**
+Each project/account combination gets completely isolated sessions:
+```bash
+# Project A with work account
+cd ~/frontend-project
+claude-reactor --account work     # Session: ~/.claude-reactor/work/frontend-project-a1b2c3d4/
+
+# Project B with work account (separate session)
+cd ~/backend-project  
+claude-reactor --account work     # Session: ~/.claude-reactor/work/backend-project-e5f6g7h8/
+
+# Same project with personal account (separate session)
+cd ~/frontend-project
+claude-reactor --account personal # Session: ~/.claude-reactor/personal/frontend-project-a1b2c3d4/
+```
+
+### **Project Management Commands**
+
+#### **List All Accounts and Projects**
+```bash
+# View all accounts, projects, and containers
+claude-reactor list               # Flat table view
+claude-reactor list --json        # JSON output for scripting
+
+# Example output:
+# ACCOUNT    PROJECT         HASH     CTR LAST USED     SESSION DIR
+# john       claude-reactor  f7894af8 1   2h ago        ~/.claude-reactor/john/claude-reactor-f7894af8
+# work       frontend-app    a1b2c3d4 0   1d ago        ~/.claude-reactor/work/frontend-app-a1b2c3d4
+```
+
+#### **Granular Cleanup Options**
+```bash
+# Containers only (default, backward compatible)
+claude-reactor clean              
+
+# Containers + session data (conversation history)
+claude-reactor clean --sessions   
+
+# Containers + session data + authentication
+claude-reactor clean --auth       
+
+# Everything including global cache
+claude-reactor clean --all        
+
+# Additional options
+claude-reactor clean --sessions --images  # Also remove Docker images
+claude-reactor clean --force              # Skip confirmation prompts
 ```
 
 **Container Images:**
 - **Built-in variants**: `base`, `go`, `full`, `cloud`, `k8s` (auto-built and validated)
 - **Custom Docker images**: Any Docker Hub or registry image (e.g. `ubuntu:22.04`, `node:18-alpine`)
 - **Auto-detection**: Automatically selects best variant based on project files
-
-### **Multi-Account Workflow**
-```bash
-# Default account usage (no account specified)
-claude-reactor                    # Uses ~/.claude-reactor/.default-claude.json
-
-# Work account usage
-claude-reactor --account work     # Sets account=work, uses ~/.claude-reactor/.work-claude.json
-claude-reactor config show      # Shows: Account: work
-
-# Personal account usage  
-claude-reactor --account personal # Sets account=personal, uses ~/.claude-reactor/.personal-claude.json
-
-# Account-specific API key (optional)
-claude-reactor --account work --apikey sk-ant-xxx  # Creates .claude-reactor-work-env
-
-# Switch between accounts in different projects
-cd ~/work-project && claude-reactor  # Uses work account if saved in .claude-reactor
-cd ~/personal-project && claude-reactor  # Uses personal account if saved in .claude-reactor
 ```
 
 ### **Build and Test Automation**
@@ -241,19 +308,32 @@ docker run -d --name claude-agent-go -v "$(pwd)":/app claude-reactor-go
 
 ## Configuration Files
 
-### `.claude-reactor` (Project-specific settings)
+### **Project Session Configuration (New Structure)**
+Configuration is now stored in account/project-specific session directories:
+
+**Location**: `~/.claude-reactor/{account}/{project-name}-{project-hash}/.claude-reactor`
+
 ```bash
 variant=go
-danger=true
 account=work
+danger=true
+host_docker=false
+session_persistence=true
 ```
 
-This file is automatically created when you use `run --image`, `--danger`, or `--account` flags and stores your preferences per project directory.
-
 **Configuration Options:**
-- `variant=` - Container variant (base, go, full, cloud, k8s)
+- `variant=` - Container variant (base, go, full, cloud, k8s, or custom image)
+- `account=` - Claude account name (defaults to $USER, fallback to "user")
 - `danger=` - Enable danger mode (true/false)
-- `account=` - Claude account to use (creates isolated authentication)
+- `host_docker=` - Enable host Docker access (true/false)
+- `host_docker_timeout=` - Timeout for Docker operations (e.g., "5m", "0" for unlimited)
+- `session_persistence=` - Enable session persistence (true/false)
+
+**Key Changes:**
+- ✅ **Configuration moved** from local project directory to session directory
+- ✅ **Account isolation** - each account has separate config storage
+- ✅ **Project isolation** - each project gets unique session directory
+- ✅ **Persistent sessions** - conversation history maintained per project/account
 
 ### **Container Registry Configuration**
 
@@ -281,16 +361,34 @@ The system creates separate Claude configuration files for each account:
 
 ```bash
 ~/.claude-reactor/
-├── .default-claude.json       # Default account (when account= is not set)
-├── .work-claude.json          # Work account (when account=work)
-├── .personal-claude.json      # Personal account (when account=personal)
-└── .unitary-claude.json       # Unitary account (when account=unitary)
+├── {account}/                           # Account session directories
+│   ├── {project-name}-{project-hash}/   # Project-specific sessions
+│   │   ├── .claude-reactor              # Project configuration
+│   │   ├── projects/                    # Claude conversation history
+│   │   └── shell-snapshots/            # Shell session data
+├── .{account}-claude.json               # Account-specific Claude credentials
+├── .claude-reactor-{account}-env        # Account-specific API keys (optional)
+└── .default-claude.json                # Default account credentials
+```
+
+**Examples:**
+```bash
+~/.claude-reactor/
+├── john/                               # Default account (from $USER)
+│   ├── claude-reactor-f7894af8/        # This project session
+│   └── frontend-app-a1b2c3d4/          # Another project session  
+├── work/                               # Work account sessions
+│   └── backend-api-e5f6g7h8/
+├── .john-claude.json                   # John's Claude credentials
+├── .work-claude.json                   # Work account credentials
+└── .claude-reactor-work-env            # Work account API key
 ```
 
 **Automatic Setup:**
-- First time using an account: Config is auto-copied from `~/.claude.json`
-- Each account gets isolated OAuth tokens and project settings
-- Containers are named with account: `claude-reactor-*-work`, `claude-reactor-*-personal`
+- First time using an account: Config auto-copied from `~/.claude.json`
+- Each account gets isolated OAuth tokens and session data
+- Container naming: `claude-reactor-{variant}-{arch}-{project-hash}-{account}`
+- Persistent authentication eliminates re-login requirements
 
 ## CI/CD and Release Management
 
@@ -382,6 +480,212 @@ This project demonstrates effective Claude-Human collaboration patterns:
 - **Host Integration**: Mounts Claude config, git settings, and Kubernetes config
 - **Complete Isolation**: Full separation from host while maintaining development workflow
 - **Container Variants**: 5 specialized environments from minimal (base) to comprehensive (cloud/k8s)
+
+## Troubleshooting Account Isolation and Authentication
+
+### **Authentication Issues**
+
+#### **Problem: Container requires re-login every restart**
+**Symptoms**: Claude CLI asks for authentication every time container is restarted
+**Solution**: 
+```bash
+# Check if account-specific config exists
+ls -la ~/.claude-reactor/.{your-account}-claude.json
+
+# If missing, authenticate once and config will be auto-created
+claude-reactor --account your-account --interactive-login
+
+# Verify persistent authentication
+claude-reactor list  # Should show your account and projects
+```
+
+#### **Problem: "Authentication config not found for account"**
+**Symptoms**: Error when trying to use specific account
+**Solution**:
+```bash
+# First-time account setup - auto-copies from main Claude config
+claude-reactor --account work --interactive-login
+
+# Or setup with API key
+claude-reactor --account work --apikey sk-ant-your-key
+
+# Verify account was created
+claude-reactor list
+```
+
+#### **Problem: Cannot switch between accounts**
+**Symptoms**: Always using same account despite `--account` flag
+**Solution**:
+```bash
+# Check current configuration
+claude-reactor config show
+
+# Force account recreation with different account
+claude-reactor run --account personal  # Forces recreation for personal account
+
+# Verify account isolation
+claude-reactor list  # Should show separate accounts
+```
+
+### **Container Management Issues**
+
+#### **Problem: "Container name already in use" error (Fixed)**
+**Symptoms**: `Error response from daemon: Conflict. The container name is already in use`
+**Solution**: This is now automatically resolved by smart container lifecycle management
+```bash
+# This now works automatically - container is reused
+claude-reactor run
+
+# Force recreation if needed
+claude-reactor run --image go  # Any argument forces recreation
+```
+
+#### **Problem: Wrong container being reused**
+**Symptoms**: Container reused when you want a fresh one
+**Solution**: Pass any argument to force recreation
+```bash
+# These force container recreation:
+claude-reactor run --shell
+claude-reactor run --image go
+claude-reactor run --account work
+claude-reactor run --danger
+
+# This reuses existing container:
+claude-reactor run  # (no arguments)
+```
+
+### **Session and Project Issues**
+
+#### **Problem: Lost conversation history**
+**Symptoms**: Previous Claude conversations not available
+**Solution**:
+```bash
+# Check if session directory exists
+ls -la ~/.claude-reactor/{account}/{project-name}-{hash}/
+
+# List all projects to find your sessions
+claude-reactor list
+
+# Check project hash matches (8 characters from project path)
+echo "/your/project/path" | sha256sum | cut -c1-8
+```
+
+#### **Problem: Session data mixed between projects**
+**Symptoms**: Conversation history appearing in wrong project
+**Solution**: Each project/account combo now gets isolated sessions automatically
+```bash
+# Verify isolation
+claude-reactor list  # Should show separate sessions per project
+
+# Clean up mixed sessions if needed
+claude-reactor clean --sessions --auth  # Nuclear option - removes all sessions
+```
+
+### **Account Directory Issues**
+
+#### **Problem: Permission denied accessing ~/.claude-reactor/**
+**Symptoms**: Cannot read or write account configuration
+**Solution**:
+```bash
+# Check permissions
+ls -la ~/.claude-reactor/
+
+# Fix permissions if needed
+chmod 755 ~/.claude-reactor/
+chmod 600 ~/.claude-reactor/.*.json
+chmod 600 ~/.claude-reactor/.claude-reactor-*-env
+
+# Verify access
+claude-reactor list
+```
+
+#### **Problem: Default account not using username**
+**Symptoms**: Account shows as "user" instead of your username
+**Solution**:
+```bash
+# Check USER environment variable
+echo $USER
+
+# If empty, set it:
+export USER=$(whoami)
+
+# Verify default account logic
+claude-reactor config show
+```
+
+### **List and Clean Command Issues**
+
+#### **Problem: `claude-reactor list` shows no projects**
+**Symptoms**: Empty list despite having used claude-reactor before
+**Solution**:
+```bash
+# Check if directory structure exists
+ls -la ~/.claude-reactor/
+
+# Check for old structure (pre-isolation)
+ls -la .claude-reactor  # Old project-local config
+
+# If you have old configs, they won't be migrated automatically
+# Use claude-reactor normally to create new structure
+claude-reactor run
+```
+
+#### **Problem: Clean command not removing expected data**
+**Symptoms**: Data still present after clean operation
+**Solution**:
+```bash
+# Understand clean levels:
+claude-reactor clean --help
+
+# Use appropriate level:
+claude-reactor clean              # Containers only
+claude-reactor clean --sessions   # + session data
+claude-reactor clean --auth       # + authentication
+claude-reactor clean --all        # Everything
+
+# Force without confirmation
+claude-reactor clean --auth --force
+```
+
+### **Common Account Isolation Patterns**
+
+#### **Development Team Setup**
+```bash
+# Each team member uses their own default account
+# john: ~/.claude-reactor/john/
+# alice: ~/.claude-reactor/alice/
+
+# Shared project, separate sessions
+cd ~/team-project
+john$ claude-reactor  # Uses john account
+alice$ claude-reactor  # Uses alice account
+```
+
+#### **Work/Personal Separation**
+```bash
+# Work projects
+cd ~/work-project
+claude-reactor --account work
+
+# Personal projects  
+cd ~/personal-project
+claude-reactor --account personal
+
+# Each maintains separate authentication and session history
+```
+
+#### **Multiple Client Projects**
+```bash
+# Client A project
+cd ~/client-a-project
+claude-reactor --account client-a
+
+# Client B project
+cd ~/client-b-project  
+claude-reactor --account client-b
+
+# Complete isolation between client projects
+```
 
 ## Troubleshooting Custom Images
 
