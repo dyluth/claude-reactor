@@ -6,8 +6,6 @@ toolchain go1.23.12
 
 require (
 	github.com/docker/docker v28.3.3+incompatible
-	github.com/fsnotify/fsnotify v1.9.0
-	github.com/google/uuid v1.6.0
 	github.com/moby/term v0.5.2
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1

@@ -51,6 +51,10 @@ func (m *manager) LoadConfig() (*pkg.Config, error) {
 				config.Account = value
 			case "danger":
 				config.DangerMode = value == "true"
+			case "host_docker":
+				config.HostDocker = value == "true"
+			case "host_docker_timeout":
+				config.HostDockerTimeout = value
 			case "session_persistence":
 				config.SessionPersistence = value == "true"
 			case "last_session_id":
@@ -85,6 +89,12 @@ func (m *manager) SaveConfig(config *pkg.Config) error {
 	}
 	if config.DangerMode {
 		fmt.Fprintf(file, "danger=true\n")
+	}
+	if config.HostDocker {
+		fmt.Fprintf(file, "host_docker=true\n")
+	}
+	if config.HostDockerTimeout != "" {
+		fmt.Fprintf(file, "host_docker_timeout=%s\n", config.HostDockerTimeout)
 	}
 	if config.SessionPersistence {
 		fmt.Fprintf(file, "session_persistence=true\n")

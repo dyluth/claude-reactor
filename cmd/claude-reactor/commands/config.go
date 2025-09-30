@@ -72,6 +72,10 @@ func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
 	fmt.Printf("🖼️  Image/Variant: %s\n", getDisplayValue(config.Variant, "auto-detect"))
 	fmt.Printf("👤 Account: %s\n", getDisplayValue(config.Account, "default"))
 	fmt.Printf("🔥 Danger Mode: %t\n", config.DangerMode)
+	fmt.Printf("🐳 Host Docker: %t\n", config.HostDocker)
+	if config.HostDocker {
+		fmt.Printf("⏰ Host Docker Timeout: %s\n", getDisplayValue(config.HostDockerTimeout, "5m"))
+	}
 	fmt.Printf("💾 Session Persistence: %t\n", config.SessionPersistence)
 	if config.SessionPersistence {
 		fmt.Printf("🔗 Last Session ID: %s\n", getDisplayValue(config.LastSessionID, "none"))

@@ -1,7 +1,6 @@
 package reactor
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -23,19 +22,19 @@ func TestNewAppContainer(t *testing.T) {
 		require.NoError(t, err, "NewAppContainer should not return error")
 		require.NotNil(t, container, "Container should not be nil")
 		
-		// Test that all components are initialized
+		// Test that all components are initialized (except Docker which is lazy)
 		assert.NotNil(t, container.Logger, "Logger should be initialized")
 		assert.NotNil(t, container.ArchDetector, "ArchDetector should be initialized")
 		assert.NotNil(t, container.ConfigMgr, "ConfigMgr should be initialized")
-		assert.NotNil(t, container.DockerMgr, "DockerMgr should be initialized")
+		assert.Nil(t, container.DockerMgr, "DockerMgr should be nil initially (lazy initialization)")
+		assert.Nil(t, container.ImageValidator, "ImageValidator should be nil initially (lazy initialization)")
 		assert.NotNil(t, container.AuthMgr, "AuthMgr should be initialized")
 		assert.NotNil(t, container.MountMgr, "MountMgr should be initialized")
-		
-		// Test that all components implement their interfaces
+
+		// Test that non-Docker components implement their interfaces
 		assert.Implements(t, (*pkg.Logger)(nil), container.Logger)
 		assert.Implements(t, (*pkg.ArchitectureDetector)(nil), container.ArchDetector)
 		assert.Implements(t, (*pkg.ConfigManager)(nil), container.ConfigMgr)
-		assert.Implements(t, (*pkg.DockerManager)(nil), container.DockerMgr)
 		assert.Implements(t, (*pkg.AuthManager)(nil), container.AuthMgr)
 		assert.Implements(t, (*pkg.MountManager)(nil), container.MountMgr)
 	})
@@ -63,13 +62,25 @@ func TestNewAppContainer(t *testing.T) {
 		assert.NoError(t, err, "ConfigMgr should work")
 		assert.NotNil(t, config, "Should return valid config")
 		
-		// Test that Docker manager is connected to Docker daemon
-		// (This will fail gracefully if Docker is not available)
-		_, err = container.DockerMgr.IsContainerRunning(context.Background(), "non-existent")
-		// Error is expected but should not panic
+		// Test lazy Docker initialization
+		// Initially Docker components should be nil
+		assert.Nil(t, container.DockerMgr, "DockerMgr should be nil before EnsureDockerComponents")
+		assert.Nil(t, container.ImageValidator, "ImageValidator should be nil before EnsureDockerComponents")
+
+		// Test EnsureDockerComponents (may fail if Docker not available, but shouldn't panic)
 		assert.NotPanics(t, func() {
-			_, _ = container.DockerMgr.IsContainerRunning(context.Background(), "test")
-		})
+			_ = EnsureDockerComponents(container)
+		}, "EnsureDockerComponents should not panic")
+
+		// If Docker is available, components should be initialized
+		if EnsureDockerComponents(container) == nil {
+			assert.NotNil(t, container.DockerMgr, "DockerMgr should be initialized after EnsureDockerComponents")
+			assert.NotNil(t, container.ImageValidator, "ImageValidator should be initialized after EnsureDockerComponents")
+
+			// Test that Docker components implement their interfaces
+			assert.Implements(t, (*pkg.DockerManager)(nil), container.DockerMgr)
+			assert.Implements(t, (*pkg.ImageValidator)(nil), container.ImageValidator)
+		}
 	})
 	
 	t.Run("multiple container instances are independent", func(t *testing.T) {
@@ -92,7 +103,9 @@ func TestNewAppContainer(t *testing.T) {
 		assert.NotSame(t, container1.Logger, container2.Logger, "Loggers should be different instances")
 		assert.NotSame(t, container1.ArchDetector, container2.ArchDetector, "ArchDetectors should be different instances")
 		assert.NotSame(t, container1.ConfigMgr, container2.ConfigMgr, "ConfigMgrs should be different instances")
-		assert.NotSame(t, container1.DockerMgr, container2.DockerMgr, "DockerMgrs should be different instances")
+		// Docker components are lazy initialized, so both should be nil initially
+		assert.Nil(t, container1.DockerMgr, "DockerMgr should be nil initially")
+		assert.Nil(t, container2.DockerMgr, "DockerMgr should be nil initially")
 		assert.NotSame(t, container1.AuthMgr, container2.AuthMgr, "AuthMgrs should be different instances")
 		assert.NotSame(t, container1.MountMgr, container2.MountMgr, "MountMgrs should be different instances")
 	})
@@ -137,16 +150,27 @@ func TestNewAppContainer_DockerError(t *testing.T) {
 	
 	t.Run("handles docker initialization", func(t *testing.T) {
 		container, err := NewAppContainer(false, false, "info")
-		
-		// Docker may not be available in all test environments
-		// The function should either succeed or fail gracefully
-		if err != nil {
-			// If there's an error, it should be related to Docker
-			assert.Contains(t, err.Error(), "docker", "Error should be Docker-related")
+
+		// NewAppContainer should always succeed now (Docker is lazy)
+		require.NoError(t, err, "NewAppContainer should not fail due to Docker")
+		require.NotNil(t, container, "Container should be initialized")
+
+		// Docker components should be nil initially (lazy initialization)
+		assert.Nil(t, container.DockerMgr, "DockerMgr should be nil before EnsureDockerComponents")
+		assert.Nil(t, container.ImageValidator, "ImageValidator should be nil before EnsureDockerComponents")
+
+		// Test lazy Docker initialization
+		dockerErr := EnsureDockerComponents(container)
+		if dockerErr != nil {
+			// Docker not available, but that's expected in some environments
+			assert.Contains(t, dockerErr.Error(), "docker", "Error should be Docker-related")
+			// Components should still be nil after failed initialization
+			assert.Nil(t, container.DockerMgr, "DockerMgr should remain nil after failed initialization")
+			assert.Nil(t, container.ImageValidator, "ImageValidator should remain nil after failed initialization")
 		} else {
-			// If successful, container should be fully initialized
-			assert.NotNil(t, container, "Container should be initialized")
-			assert.NotNil(t, container.DockerMgr, "DockerMgr should be initialized")
+			// Docker available and components should be initialized
+			assert.NotNil(t, container.DockerMgr, "DockerMgr should be initialized after successful EnsureDockerComponents")
+			assert.NotNil(t, container.ImageValidator, "ImageValidator should be initialized after successful EnsureDockerComponents")
 		}
 	})
 }
@@ -171,20 +195,17 @@ func BenchmarkNewAppContainer(b *testing.B) {
 // Test to ensure AppContainer satisfies the expected interface
 func TestAppContainerInterface(t *testing.T) {
 	container, err := NewAppContainer(false, false, "info")
-	
-	// Skip Docker-related assertions if Docker is not available
-	if err != nil && strings.Contains(err.Error(), "failed to connect to Docker daemon") {
-		t.Skip("Docker daemon not available - skipping container interface test")
-	}
-	
-	require.NoError(t, err)
+
+	require.NoError(t, err, "NewAppContainer should not fail")
 	require.NotNil(t, container)
-	
+
 	// Test that AppContainer has all expected fields
 	assert.NotNil(t, container.Logger, "AppContainer should have Logger field")
 	assert.NotNil(t, container.ArchDetector, "AppContainer should have ArchDetector field")
 	assert.NotNil(t, container.ConfigMgr, "AppContainer should have ConfigMgr field")
-	assert.NotNil(t, container.DockerMgr, "AppContainer should have DockerMgr field")
+	// Docker components are lazy initialized, so should be nil initially
+	assert.Nil(t, container.DockerMgr, "DockerMgr should be nil initially (lazy initialization)")
+	assert.Nil(t, container.ImageValidator, "ImageValidator should be nil initially (lazy initialization)")
 	assert.NotNil(t, container.AuthMgr, "AppContainer should have AuthMgr field")
 	assert.NotNil(t, container.MountMgr, "AppContainer should have MountMgr field")
 }

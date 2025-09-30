@@ -44,6 +44,11 @@ if [ -S "$DOCKER_SOCKET_HOST" ]; then
 
     # Export the DOCKER_HOST for any child processes of this script.
     export DOCKER_HOST="unix://${DOCKER_SOCKET_PROXY}"
+    
+    # Also write DOCKER_HOST to shell config files so it's available in all shell sessions
+    echo "export DOCKER_HOST=\"unix://${DOCKER_SOCKET_PROXY}\"" >> /home/claude/.bashrc
+    echo "export DOCKER_HOST=\"unix://${DOCKER_SOCKET_PROXY}\"" >> /home/claude/.bash_profile
+    echo "entrypoint: Added DOCKER_HOST to shell config files for persistent access"
 fi
 
 # Execute the main command passed to the container (e.g., 'tail -f /dev/null')

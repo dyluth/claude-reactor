@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"claude-reactor/internal/reactor"
 	"claude-reactor/pkg"
 )
 
@@ -23,26 +24,26 @@ func SetVersionInfo(version, gitCommit, buildDate string) {
 	debugBuildDate = buildDate
 }
 
-// NewDebugCmd creates the debug command with troubleshooting tools
-func NewDebugCmd(app *pkg.AppContainer) *cobra.Command {
-	var debugCmd = &cobra.Command{
-		Use:   "debug",
-		Short: "Debug information and troubleshooting",
-		Long:  "Provide debug information and troubleshooting tools for claude-reactor.",
+// NewInfoCmd creates the info command with troubleshooting tools
+func NewInfoCmd(app *pkg.AppContainer) *cobra.Command {
+	var infoCmd = &cobra.Command{
+		Use:   "info",
+		Short: "System information and troubleshooting",
+		Long:  "Provide system information and troubleshooting tools for claude-reactor.",
 		Example: `# Show system information
-claude-reactor debug info
+claude-reactor info
 
 # Test custom image compatibility
-claude-reactor debug image ubuntu:22.04
+claude-reactor info image ubuntu:22.04
 
 # Clear validation cache
-claude-reactor debug cache clear
+claude-reactor info cache clear
 
 # Show cache statistics
-claude-reactor debug cache info`,
+claude-reactor info cache info`,
 	}
 
-	debugCmd.AddCommand(
+	infoCmd.AddCommand(
 		&cobra.Command{
 			Use:   "status",
 			Short: "Show debug status",
@@ -65,7 +66,7 @@ claude-reactor debug cache info`,
 			Long:  "Display comprehensive system information including Docker connectivity, architecture, and version details.",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				app.Logger.Info("=== Claude-Reactor Debug Info ===")
-				
+
 				// Architecture information
 				arch, err := app.ArchDetector.GetHostArchitecture()
 				if err != nil {
@@ -73,28 +74,32 @@ claude-reactor debug cache info`,
 				} else {
 					cmd.Printf("Host Architecture: %s\n", arch)
 				}
-				
+
 				platform, err := app.ArchDetector.GetDockerPlatform()
 				if err != nil {
 					app.Logger.Errorf("Failed to get Docker platform: %v", err)
 				} else {
 					cmd.Printf("Docker Platform: %s\n", platform)
 				}
-				
+
 				cmd.Printf("Multi-arch Support: %t\n", app.ArchDetector.IsMultiArchSupported())
-				
+
 				// Version information
 				cmd.Printf("Version: %s\n", debugVersion)
 				cmd.Printf("Git Commit: %s\n", debugGitCommit)
 				cmd.Printf("Build Date: %s\n", debugBuildDate)
-				
-				// Docker connectivity test
+
+				// Docker connectivity test - try to initialize Docker
 				ctx := cmd.Context()
-				_, dockerErr := app.DockerMgr.IsContainerRunning(ctx, "test-connection")
-				if dockerErr != nil {
-					cmd.Printf("Docker Connection: ❌ Failed (%v)\n", dockerErr)
+				if err := reactor.EnsureDockerComponents(app); err != nil {
+					cmd.Printf("Docker Connection: ❌ Failed (%v)\n", err)
 				} else {
-					cmd.Printf("Docker Connection: ✅ Connected\n")
+					_, dockerErr := app.DockerMgr.IsContainerRunning(ctx, "test-connection")
+					if dockerErr != nil {
+						cmd.Printf("Docker Connection: ❌ Failed (%v)\n", dockerErr)
+					} else {
+						cmd.Printf("Docker Connection: ✅ Connected\n")
+					}
 				}
 				
 				return nil
@@ -118,9 +123,15 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				imageName := args[0]
 				ctx := cmd.Context()
-				
+
+				// Ensure Docker components are initialized
+				if err := reactor.EnsureDockerComponents(app); err != nil {
+					cmd.Printf("❌ Docker not available: %v\n", err)
+					return err
+				}
+
 				app.Logger.Infof("🔍 Testing image compatibility: %s", imageName)
-				
+
 				// Test image validation
 				result, err := app.ImageValidator.ValidateImage(ctx, imageName, true)
 				if err != nil {
@@ -205,6 +216,12 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 			Short: "Clear validation cache",
 			Long:  "Remove all cached image validation results, forcing re-validation on next use.",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Ensure Docker components are initialized
+				if err := reactor.EnsureDockerComponents(app); err != nil {
+					cmd.Printf("❌ Docker not available: %v\n", err)
+					return err
+				}
+
 				err := app.ImageValidator.ClearCache()
 				if err != nil {
 					cmd.Printf("❌ Failed to clear cache: %v\n", err)
@@ -216,7 +233,7 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 		},
 	)
 	
-	debugCmd.AddCommand(cacheCmd)
+	infoCmd.AddCommand(cacheCmd)
 	
-	return debugCmd
+	return infoCmd
 }

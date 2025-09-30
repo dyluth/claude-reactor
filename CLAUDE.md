@@ -4,17 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Claude-Reactor** is a professional, modular Docker containerization system for Claude CLI development workflows. It transforms the basic Claude CLI into a comprehensive development environment with intelligent automation, multi-language support, and production-ready tooling.
+**Claude-Reactor** is a simple, safe way to run Claude CLI in Docker containers with account isolation. It provides multiple pre-built container variants for different development needs while maintaining security and simplicity.
 
-**Primary Use Case**: Personal and team development workflows that require isolated, reproducible development environments with smart tooling automation.
+**Primary Use Case**: Secure, isolated Claude CLI execution with proper account separation and container-based development environments.
 
 **Key Value Propositions**:
-- **Zero Configuration**: Auto-detects project type and sets up appropriate development environment
-- **Registry Integration**: Automatically pulls pre-built images from GitHub Container Registry for instant startup
-- **Language Agnostic**: Supports Go, Rust, Java, Python, Node.js, and cloud development workflows  
-- **Professional Automation**: Makefile + script integration for both development and CI/CD
-- **Persistent Intelligence**: Remembers your preferences and configurations per project
-- **Comprehensive Testing**: Unit tests, integration tests, and interactive demonstrations
+- **Account Isolation**: Each Claude account gets separate containers and configuration
+- **Multiple Variants**: Pre-built images for different development stacks (base, go, full, cloud, k8s)
+- **Security First**: Non-root execution and proper permission handling
+- **Simple Configuration**: Minimal setup with sensible defaults
+- **Build Automation**: Use the Makefile for all build and development operations
 
 ## Project Architecture
 
@@ -92,6 +91,32 @@ Each Claude account gets its own isolated configuration:
 - **OAuth (Recommended)**: Uses existing Claude CLI authentication from config files
 - **API Key**: Via project-specific environment files (`claude-reactor --apikey YOUR_KEY`)
 - **Interactive UI**: Direct login through Claude CLI (use `--interactive-login`)
+
+## Build Operations
+
+**⚠️ IMPORTANT: Use the Makefile for all build and development operations**
+
+Claude-reactor follows standard practice by using a Makefile for build automation instead of CLI commands. For all build, test, and development operations, use the comprehensive Makefile targets:
+
+```bash
+# Build operations
+make help                    # Show all available targets
+make build                   # Build the claude-reactor binary
+make build-all              # Build all container variants
+make test                   # Run complete test suite
+make test-unit              # Run unit tests only
+make clean                  # Clean build artifacts
+make clean-all              # Complete cleanup
+
+# Container management
+make run                    # Quick container startup (delegates to claude-reactor)
+make demo                   # Interactive feature demonstration
+
+# Development workflow
+make dev-setup              # Prepare environment for contributions
+```
+
+The Makefile provides professional build automation with 25+ targets covering all development needs. CLI commands focus solely on runtime container management, not build operations.
 
 ## Development Workflows
 

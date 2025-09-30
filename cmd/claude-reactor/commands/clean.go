@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"claude-reactor/internal/reactor"
 	"claude-reactor/pkg"
 )
 
@@ -31,11 +32,16 @@ Clean up development containers, cached images, and temporary resources.`,
 // cleanContainers handles container cleanup logic
 func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	ctx := cmd.Context()
-	
+
+	// Ensure Docker components are initialized
+	if err := reactor.EnsureDockerComponents(app); err != nil {
+		return fmt.Errorf("docker not available: %w", err)
+	}
+
 	all, _ := cmd.Flags().GetBool("all")
 	images, _ := cmd.Flags().GetBool("images")
 	cache, _ := cmd.Flags().GetBool("cache")
-	
+
 	app.Logger.Info("🧹 Cleaning up containers...")
 	
 	if all {

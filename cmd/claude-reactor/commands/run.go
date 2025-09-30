@@ -1,13 +1,16 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"claude-reactor/internal/reactor"
 	"claude-reactor/pkg"
 )
 
@@ -30,11 +33,15 @@ Examples:
   claude-reactor run --image ghcr.io/org/dev  # Use custom registry image
   claude-reactor run --shell                  # Launch interactive shell instead
   claude-reactor run --danger                 # Enable danger mode (skip permissions)
+  claude-reactor run --host-docker            # Enable host Docker access (⚠️  SECURITY WARNING)
+  claude-reactor run --host-docker --host-docker-timeout 15m  # Host Docker with custom timeout
+  claude-reactor run --host-docker --host-docker-timeout 0    # Host Docker with unlimited timeout
+  claude-reactor run --danger --host-docker   # Combined danger mode and host Docker
   claude-reactor run --account work           # Use specific account configuration
   claude-reactor run --account work --apikey sk-ant-xxx  # Set API key for work account
   claude-reactor run --account new --interactive-login   # Force interactive login for new account
   claude-reactor run --no-persist             # Remove container when finished
-  
+
   # Registry control (v2 images)
   claude-reactor run --dev                    # Force local build (disable registry)
   claude-reactor run --registry-off           # Disable registry completely
@@ -46,13 +53,21 @@ Custom Image Requirements:
   • Must have Claude CLI installed: 'claude --version' should work
   • Recommended tools: git, curl, make, nano (warnings shown if missing)
 
+Host Docker Access (⚠️  SECURITY WARNING):
+  --host-docker flag grants HOST-LEVEL Docker privileges:
+  • Can create/manage ANY container on the host
+  • Can mount/access ANY host directory
+  • Can access host network and other containers
+  • Equivalent to ROOT access on the host system
+  • Default timeout: 5m (override with --host-docker-timeout)
+  • Only enable for trusted workflows requiring Docker management
+
 Troubleshooting:
-  Use 'claude-reactor debug info' to check Docker connectivity
-  Use 'claude-reactor debug image <name>' to test custom images
+  Use 'claude-reactor info' to check Docker connectivity
+  Use 'claude-reactor info image <name>' to test custom images
   Use '--verbose' flag for detailed validation information
-  
+
 Related Commands:
-  claude-reactor build         Build container images
   claude-reactor clean         Remove containers
   claude-reactor config show   View current configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -66,6 +81,8 @@ Related Commands:
 	runCmd.Flags().StringP("apikey", "", "", "Set API key for this session (creates account-specific env file)")
 	runCmd.Flags().BoolP("interactive-login", "", false, "Force interactive authentication for account")
 	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode (--dangerously-skip-permissions)")
+	runCmd.Flags().BoolP("host-docker", "", false, "Enable host Docker socket access (⚠️  SECURITY: grants host-level Docker privileges)")
+	runCmd.Flags().StringP("host-docker-timeout", "", "5m", "Timeout for Docker operations (use '0' to disable timeout)")
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
 	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
@@ -82,6 +99,10 @@ Related Commands:
 
 // RunContainer handles the main container execution logic
 func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
+	if app == nil {
+		return fmt.Errorf("application container is not initialized")
+	}
+
 	ctx := cmd.Context()
 
 	// Parse command flags
@@ -90,6 +111,8 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	apikey, _ := cmd.Flags().GetString("apikey")
 	interactiveLogin, _ := cmd.Flags().GetBool("interactive-login")
 	danger, _ := cmd.Flags().GetBool("danger")
+	hostDocker, _ := cmd.Flags().GetBool("host-docker")
+	hostDockerTimeout, _ := cmd.Flags().GetString("host-docker-timeout")
 	shell, _ := cmd.Flags().GetBool("shell")
 	mounts, _ := cmd.Flags().GetStringSlice("mount")
 	noPersist, _ := cmd.Flags().GetBool("no-persist")
@@ -103,6 +126,11 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 
 	// Conversation control (Phase 0.3)
 	noContinue, _ := cmd.Flags().GetBool("no-continue")
+
+	// Ensure Docker components are initialized
+	if err := reactor.EnsureDockerComponents(app); err != nil {
+		return fmt.Errorf("docker not available: %w", err)
+	}
 
 	app.Logger.Info("🚀 Starting Claude CLI container...")
 
@@ -132,6 +160,42 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 	} else if config.DangerMode {
 		app.Logger.Info("🔥 Using persistent danger mode setting")
+	}
+
+	// Handle host Docker configuration with persistence logic
+	if cmd.Flags().Changed("host-docker") {
+		config.HostDocker = hostDocker
+		if hostDocker {
+			app.Logger.Info("🐳 Host Docker access enabled and will be persisted")
+		} else {
+			app.Logger.Info("🔒 Host Docker access disabled and will be persisted")
+		}
+	} else if config.HostDocker {
+		app.Logger.Info("🐳 Using persistent host Docker setting")
+		hostDocker = true // Use saved setting
+	}
+
+	// Handle host Docker timeout configuration
+	if cmd.Flags().Changed("host-docker-timeout") {
+		config.HostDockerTimeout = hostDockerTimeout
+	} else if config.HostDockerTimeout != "" {
+		hostDockerTimeout = config.HostDockerTimeout
+	} else {
+		// Set default if not configured
+		config.HostDockerTimeout = "5m"
+		hostDockerTimeout = "5m"
+	}
+
+	// Validate timeout format if host Docker is enabled
+	if hostDocker {
+		if hostDockerTimeout != "0" && hostDockerTimeout != "0s" {
+			if _, err := time.ParseDuration(hostDockerTimeout); err != nil {
+				return fmt.Errorf("invalid timeout format '%s': %w\n💡 Use Go duration format: 5m, 1h30m, 30s\n💡 Valid examples: 30s, 5m, 1h, 2h30m\n💡 Disable timeout: 0", hostDockerTimeout, err)
+			}
+		}
+
+		// Display security warning for host Docker access
+		displayHostDockerSecurityWarning(app.Logger, hostDockerTimeout)
 	}
 
 	// Handle authentication flags
@@ -273,9 +337,23 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	app.Logger.Infof("🔨 Building image if needed: %s", imageName)
 	app.Logger.Info("⏳ This may take a few minutes for first-time setup...")
 
+	// Create Docker operation context with timeout if host Docker is enabled
+	dockerCtx := ctx
+	if hostDocker && hostDockerTimeout != "0" && hostDockerTimeout != "0s" {
+		timeout, _ := time.ParseDuration(hostDockerTimeout) // Already validated above
+		var cancel context.CancelFunc
+		dockerCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		app.Logger.Infof("🕒 Docker operations timeout set to: %s", hostDockerTimeout)
+	}
+
 	// Build image with registry support (Phase 0.1)
-	err = app.DockerMgr.BuildImageWithRegistry(ctx, config.Variant, platform, devMode, registryOff, pullLatest)
+	err = app.DockerMgr.BuildImageWithRegistry(dockerCtx, config.Variant, platform, devMode, registryOff, pullLatest)
 	if err != nil {
+		// Check for timeout error
+		if dockerCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
+		}
 		return fmt.Errorf("failed to build image: %w. Try running 'docker system prune' to free space or check your Dockerfile", err)
 	}
 
@@ -289,6 +367,8 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		TTY:              true,
 		Remove:           false, // Don't auto-remove - we manage lifecycle
 		RunClaudeUpgrade: true,  // Run claude upgrade after container startup
+		HostDocker:       hostDocker,
+		HostDockerTimeout: hostDockerTimeout,
 	}
 
 	// Add mounts (skip if requested for testing)
@@ -308,8 +388,12 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	var containerID string
 	if config.SessionPersistence {
 		app.Logger.Info("🔄 Starting container with session persistence...")
-		containerID, err = app.DockerMgr.StartOrRecoverContainer(ctx, containerConfig, config)
+		containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
 		if err != nil {
+			// Check for timeout error
+			if dockerCtx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
+			}
 			return fmt.Errorf("failed to start or recover container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
 
@@ -321,8 +405,12 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 	} else {
 		app.Logger.Info("🏗️ Starting ephemeral container...")
-		containerID, err = app.DockerMgr.StartContainer(ctx, containerConfig)
+		containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
 		if err != nil {
+			// Check for timeout error
+			if dockerCtx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
+			}
 			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
 	}
@@ -415,6 +503,20 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 		}
 	}
 
+	// Add Docker socket mount if host Docker access is enabled
+	if containerConfig.HostDocker {
+		dockerSock := "/var/run/docker.sock"
+		if _, err := os.Stat(dockerSock); err == nil {
+			err = app.MountMgr.AddMountToConfig(containerConfig, dockerSock, "/var/run/docker.sock")
+			if err != nil {
+				return fmt.Errorf("failed to add Docker socket mount: %w", err)
+			}
+			app.Logger.Infof("🐳 Host Docker socket mount: %s -> /var/run/docker.sock", dockerSock)
+		} else {
+			return fmt.Errorf("host Docker requested but socket not available at %s\n💡 Mount Docker socket: -v /var/run/docker.sock:/var/run/docker.sock\n💡 Add docker group: --group-add docker\n💡 See documentation: claude-reactor help docker-setup", dockerSock)
+		}
+	}
+
 	// Add user-specified mounts
 	for _, mountPath := range userMounts {
 		validatedPath, err := app.MountMgr.ValidateMountPath(mountPath)
@@ -433,4 +535,24 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	}
 
 	return nil
+}
+
+// displayHostDockerSecurityWarning shows a prominent security warning when host Docker access is enabled
+func displayHostDockerSecurityWarning(logger pkg.Logger, timeout string) {
+	logger.Info("")
+	logger.Info("⚠️  WARNING: HOST DOCKER ACCESS ENABLED")
+	logger.Info("🔒 This grants claude-reactor container HOST-LEVEL Docker privileges:")
+	logger.Info("   • Can create/manage ANY container on the host")
+	logger.Info("   • Can mount/access ANY host directory")
+	logger.Info("   • Can access host network and other containers")
+	logger.Info("   • Equivalent to ROOT access on the host system")
+
+	if timeout == "0" || timeout == "0s" {
+		logger.Info("⏰ Docker operations: UNLIMITED TIMEOUT (no timeout protection)")
+	} else {
+		logger.Info(fmt.Sprintf("⏰ Docker operations timeout: %s", timeout))
+	}
+
+	logger.Info("💡 Only enable for trusted workflows requiring Docker management")
+	logger.Info("")
 }

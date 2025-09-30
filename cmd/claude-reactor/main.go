@@ -66,18 +66,17 @@ func Execute() error {
 func newRootCmd(app *pkg.AppContainer) *cobra.Command {
 	var rootCmd = &cobra.Command{
 		Use:   "claude-reactor",
-		Short: "Claude CLI in Docker - Modern containerization for Claude development",
-		Long: `Claude-Reactor provides a professional, modular Docker containerization system 
-for Claude CLI development workflows. It transforms the basic Claude CLI into a 
-comprehensive development environment with intelligent automation, multi-language 
-support, and production-ready tooling.`,
+		Short: "A simple, safe way to run Claude CLI in Docker containers with account isolation",
+		Long: `Claude-Reactor provides a secure way to run Claude CLI in Docker containers
+with proper account isolation. It offers multiple pre-built container variants
+for different development needs while maintaining security and simplicity.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildDate),
 		Run: func(cmd *cobra.Command, args []string) {
 			// Handle deprecated flags with clear migration guidance
 
 			if listVariants, _ := cmd.Flags().GetBool("list-variants"); listVariants {
 				fmt.Fprintf(os.Stderr, "❌ The --list-variants flag has been removed. Use:\n")
-				fmt.Fprintf(os.Stderr, "   claude-reactor debug info\n")
+				fmt.Fprintf(os.Stderr, "   claude-reactor info\n")
 				os.Exit(1)
 			}
 
@@ -130,14 +129,9 @@ support, and production-ready tooling.`,
 	// Add subcommands from commands package
 	rootCmd.AddCommand(
 		commands.NewRunCmd(app),
-		commands.NewBuildCmd(app),
 		commands.NewConfigCmd(app),
 		commands.NewCleanCmd(app),
-		commands.NewDevContainerCmd(app),
-		commands.NewTemplateCmd(app),
-		commands.NewDependencyCmd(app),
-		commands.NewHotReloadCmd(app),
-		commands.NewDebugCmd(app),
+		commands.NewInfoCmd(app),
 		commands.NewCompletionCmd(app),
 	)
 

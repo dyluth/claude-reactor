@@ -41,20 +41,8 @@ func (mm *MountManager) CreateDefaultMounts(account string) ([]pkg.Mount, error)
 	})
 	
 	mm.logger.Debugf("Added project mount: %s -> /app", currentDir)
-	
-	// 2. Docker socket mount for Docker-in-Docker access
-	dockerSock := "/var/run/docker.sock"
-	if _, err := os.Stat(dockerSock); err == nil {
-		mounts = append(mounts, pkg.Mount{
-			Source: dockerSock,
-			Target: "/var/run/docker.sock",
-			Type:   "bind",
-			ReadOnly: false,
-		})
-		mm.logger.Debugf("Added Docker socket mount")
-	}
-	
-	// 3. Kubernetes config mount (read-only)
+
+	// 2. Kubernetes config mount (read-only)
 	kubeConfig := filepath.Join(os.Getenv("HOME"), ".kube")
 	if _, err := os.Stat(kubeConfig); err == nil {
 		mounts = append(mounts, pkg.Mount{
@@ -66,7 +54,7 @@ func (mm *MountManager) CreateDefaultMounts(account string) ([]pkg.Mount, error)
 		mm.logger.Debugf("Added Kubernetes config mount")
 	}
 	
-	// 4. Git config mount (read-only)
+	// 3. Git config mount (read-only)
 	gitConfig := filepath.Join(os.Getenv("HOME"), ".gitconfig")
 	if _, err := os.Stat(gitConfig); err == nil {
 		mounts = append(mounts, pkg.Mount{
@@ -78,7 +66,7 @@ func (mm *MountManager) CreateDefaultMounts(account string) ([]pkg.Mount, error)
 		mm.logger.Debugf("Added Git config mount")
 	}
 	
-	// 5. Claude config mount (account-specific)
+	// 4. Claude config mount (account-specific)
 	claudeMounts, err := mm.createClaudeConfigMounts(account)
 	if err != nil {
 		mm.logger.Warnf("Failed to create Claude config mounts: %v", err)
