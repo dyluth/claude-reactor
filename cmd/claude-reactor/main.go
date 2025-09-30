@@ -132,6 +132,7 @@ for different development needs while maintaining security and simplicity.`,
 		commands.NewConfigCmd(app),
 		commands.NewCleanCmd(app),
 		commands.NewInfoCmd(app),
+		commands.NewListCmd(app),
 		commands.NewCompletionCmd(app),
 	)
 
