@@ -1362,6 +1362,45 @@ func (m *manager) IsContainerHealthy(ctx context.Context, containerID string) (b
 	return true, nil
 }
 
+// initializeClaudeConfig copies the Claude configuration files from temporary mounts to proper locations
+func (m *manager) initializeClaudeConfig(ctx context.Context, containerID string) error {
+	// Copy Claude config from temporary mount to proper location
+	copyConfigCmd := []string{"sh", "-c", `
+		# Copy Claude config if the seed file exists
+		if [ -f /tmp/claude-config-seed.json ]; then
+			cp /tmp/claude-config-seed.json /home/claude/.claude.json
+			chmod 644 /home/claude/.claude.json
+			echo "Copied Claude config to /home/claude/.claude.json"
+		fi
+		
+		# Copy credentials file if it exists
+		if [ -f /home/claude/.credentials.json ]; then
+			chmod 600 /home/claude/.credentials.json
+			echo "Set credentials file permissions"
+		fi
+	`}
+	
+	// Create exec configuration
+	execConfig := container.ExecOptions{
+		Cmd:    copyConfigCmd,
+		Detach: false,
+	}
+	
+	// Create exec instance
+	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create config copy exec: %w", err)
+	}
+	
+	// Start the exec instance
+	if err := m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{}); err != nil {
+		return fmt.Errorf("failed to copy config files: %w", err)
+	}
+	
+	m.logger.Debug("Claude configuration files initialized")
+	return nil
+}
+
 // generateSessionID creates a unique session identifier
 func generateSessionID() (string, error) {
 	// Generate a random 16-character hex string

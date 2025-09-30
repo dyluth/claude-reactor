@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,7 +162,7 @@ func showCleanupPlan(cleanupLevel string, images, cache bool, app *pkg.AppContai
 }
 
 // cleanContainersLevel removes containers
-func cleanContainersLevel(ctx interface{}, app *pkg.AppContainer, all bool) error {
+func cleanContainersLevel(ctx context.Context, app *pkg.AppContainer, all bool) error {
 	if all {
 		app.Logger.Info("🗑️ Removing all claude-reactor containers...")
 		err := app.DockerMgr.CleanAllContainers(ctx)
@@ -177,9 +178,9 @@ func cleanContainersLevel(ctx interface{}, app *pkg.AppContainer, all bool) erro
 			return nil
 		}
 
-		// Normalize account using new default logic
+		// Normalize account using auth manager
 		if config.Account == "" {
-			config.Account = getDefaultAccount()
+			config.Account = app.AuthMgr.GetDefaultAccount()
 		}
 
 		arch, err := app.ArchDetector.GetHostArchitecture()
@@ -243,9 +244,9 @@ func cleanSessionsLevel(app *pkg.AppContainer, all bool) error {
 			return nil
 		}
 
-		// Normalize account
+		// Normalize account using auth manager
 		if config.Account == "" {
-			config.Account = getDefaultAccount()
+			config.Account = app.AuthMgr.GetDefaultAccount()
 		}
 
 		projectDir, err := os.Getwd()
@@ -309,9 +310,9 @@ func cleanAuthLevel(app *pkg.AppContainer, all bool) error {
 			return nil
 		}
 
-		// Normalize account
+		// Normalize account using auth manager
 		if config.Account == "" {
-			config.Account = getDefaultAccount()
+			config.Account = app.AuthMgr.GetDefaultAccount()
 		}
 
 		// Remove account-specific auth files
@@ -334,7 +335,7 @@ func cleanAuthLevel(app *pkg.AppContainer, all bool) error {
 }
 
 // cleanImagesLevel removes Docker images
-func cleanImagesLevel(ctx interface{}, app *pkg.AppContainer, all bool) error {
+func cleanImagesLevel(ctx context.Context, app *pkg.AppContainer, all bool) error {
 	app.Logger.Info("📦 Removing Docker images...")
 	
 	err := app.DockerMgr.CleanImages(ctx, all)
@@ -378,10 +379,3 @@ func getAccountDirectories(claudeReactorDir string) ([]string, error) {
 	return accounts, nil
 }
 
-// getDefaultAccount returns $USER or "user" fallback per requirements
-func getDefaultAccount() string {
-	if user := os.Getenv("USER"); user != "" {
-		return user
-	}
-	return "user"
-}

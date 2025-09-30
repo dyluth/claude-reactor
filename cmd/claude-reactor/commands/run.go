@@ -14,13 +14,6 @@ import (
 	"claude-reactor/pkg"
 )
 
-// getDefaultAccount returns $USER or "user" fallback per requirements
-func getDefaultAccount() string {
-	if user := os.Getenv("USER"); user != "" {
-		return user
-	}
-	return "user"  // Exact fallback requested
-}
 
 // NewRunCmd creates the run command for starting and connecting to Claude CLI containers
 func NewRunCmd(app *pkg.AppContainer) *cobra.Command {
@@ -174,7 +167,12 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	
 	// Normalize account to use new default account logic ($USER fallback to "user")
 	if config.Account == "" {
-		config.Account = getDefaultAccount()
+		config.Account = app.AuthMgr.GetDefaultAccount()
+	}
+
+	// Ensure account config file exists before any container operations to prevent corruption
+	if err := app.AuthMgr.CopyMainConfigToAccount(config.Account); err != nil {
+		app.Logger.Warnf("Failed to ensure account config exists: %v", err)
 	}
 
 	// Handle danger mode with persistence logic
@@ -344,7 +342,13 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(config.Account)
 	app.Logger.Infof("🔑 Claude config: %s", claudeConfigPath)
 
-	// Step 2: Generate container and image names
+	// Step 2: Get current project directory
+	projectDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Step 3: Generate container and image names
 	app.Logger.Info("🔧 Detecting system architecture...")
 	arch, err := app.ArchDetector.GetHostArchitecture()
 	if err != nil {
@@ -402,7 +406,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	// Add mounts (skip if requested for testing)
 	if !noMounts {
 		app.Logger.Info("📁 Configuring container mounts...")
-		err = AddMountsToContainer(app, containerConfig, config.Account, mounts)
+		err = AddMountsToContainer(app, containerConfig, config.Account, mounts, projectDir)
 		if err != nil {
 			return fmt.Errorf("failed to configure mounts: %w. Check that source directories exist and are accessible", err)
 		}
@@ -536,12 +540,8 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 }
 
 // AddMountsToContainer adds mount points to container configuration
-func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerConfig, account string, userMounts []string) error {
+func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerConfig, account string, userMounts []string, projectDir string) error {
 	// Add default mounts (project directory, Claude config)
-	projectDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
-	}
 
 	// Project mount - avoid circular mount if we're already in /app
 	targetPath := "/app"
@@ -549,7 +549,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 		targetPath = "/workspace" // Use different path to avoid circular mount
 	}
 
-	err = app.MountMgr.AddMountToConfig(containerConfig, projectDir, targetPath)
+	err := app.MountMgr.AddMountToConfig(containerConfig, projectDir, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to add project mount: %w", err)
 	}
@@ -558,11 +558,6 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	// Claude authentication mount - use account-specific Claude config file
 	// This ensures persistent authentication for each account across container restarts
 	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(account)
-	
-	// Ensure the config file exists by copying from main config if needed
-	if err := app.AuthMgr.CopyMainConfigToAccount(account); err != nil {
-		app.Logger.Warnf("Failed to ensure account config exists: %v", err)
-	}
 	
 	// Mount account-specific Claude config file for persistent authentication
 	if _, err := os.Stat(claudeConfigPath); err == nil {
@@ -581,7 +576,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	// Format: ~/.claude-reactor/{account}/{project-name}-{project-hash}/
 	claudeSessionDir := app.AuthMgr.GetProjectSessionDir(account, projectDir)
 	
-	// Only mount if session directory exists, or create it if needed
+	// Ensure session directory exists (including parent account directory)
 	if err := os.MkdirAll(claudeSessionDir, 0755); err != nil {
 		app.Logger.Warnf("Failed to create Claude session directory: %v", err)
 	} else {
@@ -590,6 +585,22 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 			app.Logger.Warnf("Failed to add Claude session mount: %v", err)
 		} else {
 			app.Logger.Infof("📁 Claude session mount: %s -> /home/claude/.claude", claudeSessionDir)
+		}
+	}
+	
+	// Mount the main user's credentials file for OAuth tokens
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		mainCredentialsPath := filepath.Join(homeDir, ".claude", ".credentials.json")
+		if _, err := os.Stat(mainCredentialsPath); err == nil {
+			err = app.MountMgr.AddMountToConfig(containerConfig, mainCredentialsPath, "/home/claude/.claude/.credentials.json")
+			if err != nil {
+				app.Logger.Warnf("Failed to add credentials mount: %v", err)
+			} else {
+				app.Logger.Infof("🔐 Credentials mount: %s -> /home/claude/.claude/.credentials.json", mainCredentialsPath)
+			}
+		} else {
+			app.Logger.Debugf("Main credentials file not found: %s", mainCredentialsPath)
 		}
 	}
 

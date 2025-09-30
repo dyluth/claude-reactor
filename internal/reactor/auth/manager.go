@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	
 	"claude-reactor/pkg"
 )
@@ -30,7 +31,7 @@ func NewManager(logger pkg.Logger) pkg.AuthManager {
 
 // GetAuthConfig returns authentication configuration for the specified account
 func (m *manager) GetAuthConfig(account string) (*pkg.AuthConfig, error) {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	configPath := m.GetAccountConfigPath(normalizedAccount)
 	
 	m.logger.Debugf("Loading auth config from: %s", configPath)
@@ -78,7 +79,7 @@ func (m *manager) SetupAuth(account string, apiKey string) error {
 		return fmt.Errorf("API key cannot be empty")
 	}
 	
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	m.logger.Infof("Setting up authentication for account: %s", normalizedAccount)
 	
 	// Ensure claude-reactor directory exists
@@ -101,7 +102,7 @@ func (m *manager) SetupAuth(account string, apiKey string) error {
 
 // ValidateAuth validates authentication for the specified account
 func (m *manager) ValidateAuth(account string) error {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	m.logger.Debugf("Validating authentication for account: %s", normalizedAccount)
 	
 	// Check if config file exists
@@ -123,7 +124,7 @@ func (m *manager) ValidateAuth(account string) error {
 
 // IsAuthenticated checks if the specified account is authenticated
 func (m *manager) IsAuthenticated(account string) bool {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	m.logger.Debugf("Checking authentication status for account: %s", normalizedAccount)
 	
 	configPath := m.GetAccountConfigPath(normalizedAccount)
@@ -147,7 +148,7 @@ func (m *manager) IsAuthenticated(account string) bool {
 
 // GetAccountConfigPath returns path to account-specific config file
 func (m *manager) GetAccountConfigPath(account string) string {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	if normalizedAccount == "default" {
 		return filepath.Join(m.claudeReactorDir, ".default-claude.json")
 	}
@@ -157,7 +158,7 @@ func (m *manager) GetAccountConfigPath(account string) string {
 // GetAccountSessionDir returns path to account-specific Claude session directory
 // This directory contains all Claude CLI session data: projects/, shell-snapshots/, todos/, etc.
 func (m *manager) GetAccountSessionDir(account string) string {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	return filepath.Join(m.claudeReactorDir, normalizedAccount)
 }
 
@@ -173,7 +174,7 @@ func (m *manager) SaveAPIKey(account, apiKey string) error {
 		return fmt.Errorf("API key cannot be empty")
 	}
 	
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	filename := m.GetAPIKeyFile(normalizedAccount)
 	m.logger.Debugf("Saving API key for account %s to %s", normalizedAccount, filename)
 	
@@ -182,7 +183,7 @@ func (m *manager) SaveAPIKey(account, apiKey string) error {
 
 // GetAPIKeyFile returns path to account-specific API key file
 func (m *manager) GetAPIKeyFile(account string) string {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	if normalizedAccount == "default" {
 		return filepath.Join(m.claudeReactorDir, ".claude-reactor-default-env")
 	}
@@ -191,7 +192,7 @@ func (m *manager) GetAPIKeyFile(account string) string {
 
 // CopyMainConfigToAccount copies main Claude config to account directory
 func (m *manager) CopyMainConfigToAccount(account string) error {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	m.logger.Infof("Copying main Claude config to account: %s", normalizedAccount)
 	
 	// Check if account config already exists
@@ -202,30 +203,100 @@ func (m *manager) CopyMainConfigToAccount(account string) error {
 	}
 	
 	// Try to read main claude config
-	mainConfigPath := filepath.Join(m.claudeReactorDir, ".claude.json")
+	homeDir, _ := os.UserHomeDir()
+	mainConfigPath := filepath.Join(homeDir, ".claude.json")
 	var config map[string]interface{}
 	
 	if data, err := os.ReadFile(mainConfigPath); err == nil {
 		if err := json.Unmarshal(data, &config); err != nil {
 			m.logger.Warnf("Failed to parse main claude config: %v", err)
+		} else {
+			// Filter out host-specific paths that don't exist in container
+			// Only keep /app project and container-safe global settings
+			if projects, ok := config["projects"].(map[string]interface{}); ok {
+				containerProjects := map[string]interface{}{}
+				if appProject, exists := projects["/app"]; exists {
+					containerProjects["/app"] = appProject
+				} else {
+					// Create minimal /app project if it doesn't exist
+					containerProjects["/app"] = map[string]interface{}{
+						"allowedTools":                           []interface{}{},
+						"history":                               []interface{}{},
+						"mcpContextUris":                        []interface{}{},
+						"mcpServers":                            map[string]interface{}{},
+						"enabledMcpjsonServers":                 []interface{}{},
+						"disabledMcpjsonServers":                []interface{}{},
+						"hasTrustDialogAccepted":                false,
+						"hasTrustDialogHooksAccepted":           false,
+						"projectOnboardingSeenCount":            0,
+						"hasClaudeMdExternalIncludesApproved":   false,
+						"hasClaudeMdExternalIncludesWarningShown": false,
+					}
+				}
+				config["projects"] = containerProjects
+			}
+			
+			// Remove any host-specific additional directories or working directories
+			delete(config, "additionalDirectories")
+			delete(config, "workingDirectories")
 		}
 	} else {
 		m.logger.Warnf("Main claude config not found: %s", mainConfigPath)
-		// Create default config
+		// Create complete config with ALL fields Claude CLI expects to prevent any writes
+		// Generate a stable userID based on the account name to avoid changes
+		hasher := sha256.New()
+		hasher.Write([]byte(normalizedAccount + "-claude-reactor"))
+		userID := fmt.Sprintf("%x", hasher.Sum(nil))
+		
 		config = map[string]interface{}{
-			"endpoint":  "https://api.anthropic.com",
-			"projectId": "default-project",
+			"numStartups":                   1,
+			"installMethod":                 "unknown", 
+			"autoUpdates":                   true,
+			"endpoint":                      "https://api.anthropic.com",
+			"projectId":                     "default-project",
+			"userID":                        userID,
+			"firstStartTime":                time.Now().UTC().Format(time.RFC3339),
+			"isQualifiedForDataSharing":     false,
+			"hasCompletedOnboarding":        true,
+			"lastOnboardingVersion":         "1.0.71",
+			"bypassPermissionsModeAccepted": true,
+			"fallbackAvailableWarningThreshold": 0.5,
+			"subscriptionNoticeCount":       0,
+			"hasAvailableSubscription":      false,
+			"projects": map[string]interface{}{
+				"/app": map[string]interface{}{
+					"allowedTools":                           []interface{}{},
+					"history":                               []interface{}{},
+					"mcpContextUris":                        []interface{}{},
+					"mcpServers":                            map[string]interface{}{},
+					"enabledMcpjsonServers":                 []interface{}{},
+					"disabledMcpjsonServers":                []interface{}{},
+					"hasTrustDialogAccepted":                false,
+					"hasTrustDialogHooksAccepted":           false,
+					"projectOnboardingSeenCount":            0,
+					"hasClaudeMdExternalIncludesApproved":   false,
+					"hasClaudeMdExternalIncludesWarningShown": false,
+				},
+			},
 		}
 	}
 	
-	// Write account-specific config
+	// Write account-specific config atomically to prevent corruption
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 	
-	if err := os.WriteFile(accountConfigPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write account config: %w", err)
+	// Use atomic write via temporary file to prevent corruption
+	tempPath := accountConfigPath + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temporary config: %w", err)
+	}
+	
+	// Atomic rename to final location
+	if err := os.Rename(tempPath, accountConfigPath); err != nil {
+		os.Remove(tempPath) // Clean up temp file on failure
+		return fmt.Errorf("failed to finalize account config: %w", err)
 	}
 	
 	m.logger.Infof("Created account config: %s", accountConfigPath)
@@ -245,7 +316,7 @@ func ensureClaudeReactorDir(dir string) error {
 }
 
 // GetDefaultAccount returns $USER or "user" fallback per requirements
-func GetDefaultAccount() string {
+func (m *manager) GetDefaultAccount() string {
 	if user := os.Getenv("USER"); user != "" {
 		return user
 	}
@@ -253,9 +324,9 @@ func GetDefaultAccount() string {
 }
 
 // normalizeAccount normalizes account name, using new default account logic
-func normalizeAccount(account string) string {
+func (m *manager) normalizeAccount(account string) string {
 	if strings.TrimSpace(account) == "" {
-		return GetDefaultAccount()
+		return m.GetDefaultAccount()
 	}
 	return account
 }
@@ -276,7 +347,7 @@ func GetProjectNameFromPath(projectPath string) string {
 
 // GetProjectSessionDir returns project-specific session directory  
 func (m *manager) GetProjectSessionDir(account, projectPath string) string {
-	normalizedAccount := normalizeAccount(account)
+	normalizedAccount := m.normalizeAccount(account)
 	projectName := GetProjectNameFromPath(projectPath)
 	projectHash := GenerateProjectHash(projectPath)
 	sessionDirName := fmt.Sprintf("%s-%s", projectName, projectHash)

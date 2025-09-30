@@ -130,6 +130,9 @@ type AuthManager interface {
 	// GetProjectSessionDir returns project-specific session directory
 	GetProjectSessionDir(account, projectPath string) string
 
+	// GetDefaultAccount returns $USER or "user" fallback
+	GetDefaultAccount() string
+
 	// SaveAPIKey saves API key to project-specific file
 	SaveAPIKey(account, apiKey string) error
 
