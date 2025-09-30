@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -243,10 +244,41 @@ func ensureClaudeReactorDir(dir string) error {
 	return nil
 }
 
-// normalizeAccount normalizes account name, defaulting to "default" for empty strings
+// GetDefaultAccount returns $USER or "user" fallback per requirements
+func GetDefaultAccount() string {
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+	return "user"  // Exact fallback requested
+}
+
+// normalizeAccount normalizes account name, using new default account logic
 func normalizeAccount(account string) string {
 	if strings.TrimSpace(account) == "" {
-		return "default"
+		return GetDefaultAccount()
 	}
 	return account
+}
+
+// GenerateProjectHash creates 8-character hash from absolute path
+func GenerateProjectHash(projectPath string) string {
+	// Must be 8 characters
+	// Must use absolute path  
+	// Use SHA256 and take first 8 chars
+	hash := sha256.Sum256([]byte(projectPath))
+	return fmt.Sprintf("%x", hash)[:8]
+}
+
+// GetProjectNameFromPath extracts project name from path
+func GetProjectNameFromPath(projectPath string) string {
+	return filepath.Base(projectPath)
+}
+
+// GetProjectSessionDir returns project-specific session directory  
+func (m *manager) GetProjectSessionDir(account, projectPath string) string {
+	normalizedAccount := normalizeAccount(account)
+	projectName := GetProjectNameFromPath(projectPath)
+	projectHash := GenerateProjectHash(projectPath)
+	sessionDirName := fmt.Sprintf("%s-%s", projectName, projectHash)
+	return filepath.Join(m.claudeReactorDir, normalizedAccount, sessionDirName)
 }

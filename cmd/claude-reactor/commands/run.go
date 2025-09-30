@@ -14,6 +14,14 @@ import (
 	"claude-reactor/pkg"
 )
 
+// getDefaultAccount returns $USER or "user" fallback per requirements
+func getDefaultAccount() string {
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+	return "user"  // Exact fallback requested
+}
+
 // NewRunCmd creates the run command for starting and connecting to Claude CLI containers
 func NewRunCmd(app *pkg.AppContainer) *cobra.Command {
 	var runCmd = &cobra.Command{
@@ -127,6 +135,21 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	// Conversation control (Phase 0.3)
 	noContinue, _ := cmd.Flags().GetBool("no-continue")
 
+	// Detect if any arguments were passed for smart container reuse logic
+	// Reuse ONLY when `claude-reactor run` called with NO arguments
+	// Recreate when ANY arguments passed
+	hasArgs := cmd.Flags().Changed("image") || cmd.Flags().Changed("account") || 
+			   cmd.Flags().Changed("danger") || cmd.Flags().Changed("shell") ||
+			   cmd.Flags().Changed("no-persist") || cmd.Flags().Changed("host-docker") ||
+			   cmd.Flags().Changed("host-docker-timeout") || cmd.Flags().Changed("apikey") ||
+			   cmd.Flags().Changed("interactive-login") || cmd.Flags().Changed("no-mounts") ||
+			   cmd.Flags().Changed("dev") || cmd.Flags().Changed("registry-off") ||
+			   cmd.Flags().Changed("pull-latest") || cmd.Flags().Changed("no-continue") ||
+			   len(mounts) > 0
+	
+	app.Logger.Debugf("Smart container reuse: hasArgs=%v (will %s)", hasArgs, 
+		func() string { if hasArgs { return "recreate" } else { return "reuse" } }())
+
 	// Ensure Docker components are initialized
 	if err := reactor.EnsureDockerComponents(app); err != nil {
 		return fmt.Errorf("docker not available: %w", err)
@@ -147,6 +170,11 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	}
 	if account != "" {
 		config.Account = account
+	}
+	
+	// Normalize account to use new default account logic ($USER fallback to "user")
+	if config.Account == "" {
+		config.Account = getDefaultAccount()
 	}
 
 	// Handle danger mode with persistence logic
@@ -323,7 +351,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		return fmt.Errorf("failed to detect architecture: %w. Your system may not be supported", err)
 	}
 
-	containerName := app.DockerMgr.GenerateContainerName("", config.Variant, arch, config.Account)
+	containerName := app.DockerMgr.GenerateContainerName(projectDir, config.Variant, arch, config.Account)
 	app.Logger.Infof("🏷️ Container name: %s", containerName)
 
 	// Step 3: Build image if needed
@@ -384,34 +412,74 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		containerConfig.Mounts = []pkg.Mount{}
 	}
 
-	// Step 5: Start or recover container with session persistence
+	// Step 5: Smart container lifecycle management
 	var containerID string
-	if config.SessionPersistence {
-		app.Logger.Info("🔄 Starting container with session persistence...")
-		containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
+	
+	// Check if container already exists for this project/account
+	containerExists, err := app.DockerMgr.IsContainerRunning(dockerCtx, containerName)
+	if err != nil {
+		app.Logger.Debugf("Failed to check container status: %v", err)
+		containerExists = false
+	}
+	
+	// Apply smart reuse logic
+	if containerExists && !hasArgs {
+		// Reuse existing container when no arguments passed
+		app.Logger.Info("♻️ Reusing existing container (no arguments passed)...")
+		
+		// For reuse, we need to attach to the existing container
+		// First get the container status to get its ID
+		status, err := app.DockerMgr.GetContainerStatus(dockerCtx, containerName)
 		if err != nil {
-			// Check for timeout error
-			if dockerCtx.Err() == context.DeadlineExceeded {
-				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
-			}
-			return fmt.Errorf("failed to start or recover container: %w. Check Docker daemon is running and try 'docker system prune'", err)
+			return fmt.Errorf("failed to get container status for reuse: %w", err)
 		}
-
-		// Update session tracking - save config after session persistence operations
-		// This ensures both session ID and container ID are persisted
-		config.ContainerID = containerID
-		if err := app.ConfigMgr.SaveConfig(config); err != nil {
-			app.Logger.Warnf("Failed to save session configuration: %v", err)
-		}
-	} else {
-		app.Logger.Info("🏗️ Starting ephemeral container...")
-		containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
+		containerID = status.ID
+		
+	} else if containerExists && hasArgs {
+		// Recreate container when arguments passed
+		app.Logger.Info("🔄 Recreating container (arguments passed, forcing recreation)...")
+		
+		// Remove existing container first
+		err = app.DockerMgr.CleanContainer(dockerCtx, containerName)
 		if err != nil {
-			// Check for timeout error
+			app.Logger.Warnf("Failed to remove existing container: %v", err)
+		}
+		
+		// Start new container
+		if config.SessionPersistence {
+			containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
+		} else {
+			containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
+		}
+		if err != nil {
 			if dockerCtx.Err() == context.DeadlineExceeded {
 				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
 			}
 			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
+		}
+		
+	} else {
+		// No existing container, start new one
+		if config.SessionPersistence {
+			app.Logger.Info("🔄 Starting container with session persistence...")
+			containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
+		} else {
+			app.Logger.Info("🏗️ Starting ephemeral container...")
+			containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
+		}
+		if err != nil {
+			if dockerCtx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
+			}
+			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
+		}
+	}
+	
+	// Update session tracking for session persistence
+	if config.SessionPersistence {
+		config.ContainerID = containerID
+		if err := app.ConfigMgr.SaveConfig(config); err != nil {
+			app.Logger.Warnf("Failed to save session configuration: %v", err)
 		}
 	}
 
@@ -487,10 +555,32 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	}
 	app.Logger.Infof("📁 Project mount: %s -> %s", projectDir, targetPath)
 
-	// Claude session directory mount - use account-specific session directory
-	// This ensures all accounts (including default) use isolated ~/.claude-reactor/[account]/ directories
-	claudeSessionDir := app.AuthMgr.GetAccountSessionDir(account)
+	// Claude authentication mount - use account-specific Claude config file
+	// This ensures persistent authentication for each account across container restarts
+	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(account)
+	
+	// Ensure the config file exists by copying from main config if needed
+	if err := app.AuthMgr.CopyMainConfigToAccount(account); err != nil {
+		app.Logger.Warnf("Failed to ensure account config exists: %v", err)
+	}
+	
+	// Mount account-specific Claude config file for persistent authentication
+	if _, err := os.Stat(claudeConfigPath); err == nil {
+		err = app.MountMgr.AddMountToConfig(containerConfig, claudeConfigPath, "/home/claude/.claude.json")
+		if err != nil {
+			app.Logger.Warnf("Failed to add Claude config mount: %v", err)
+		} else {
+			app.Logger.Infof("🔑 Claude auth mount: %s -> /home/claude/.claude.json", claudeConfigPath)
+		}
+	} else {
+		app.Logger.Warnf("Claude config file not found for account %s: %s", account, claudeConfigPath)
+	}
 
+	// Claude session directory mount - use project-specific session directory  
+	// This contains conversation history, shell snapshots, todos, etc.
+	// Format: ~/.claude-reactor/{account}/{project-name}-{project-hash}/
+	claudeSessionDir := app.AuthMgr.GetProjectSessionDir(account, projectDir)
+	
 	// Only mount if session directory exists, or create it if needed
 	if err := os.MkdirAll(claudeSessionDir, 0755); err != nil {
 		app.Logger.Warnf("Failed to create Claude session directory: %v", err)

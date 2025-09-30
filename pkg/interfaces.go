@@ -127,6 +127,9 @@ type AuthManager interface {
 	// GetAccountSessionDir returns path to account-specific Claude session directory
 	GetAccountSessionDir(account string) string
 
+	// GetProjectSessionDir returns project-specific session directory
+	GetProjectSessionDir(account, projectPath string) string
+
 	// SaveAPIKey saves API key to project-specific file
 	SaveAPIKey(account, apiKey string) error
 
