@@ -30,6 +30,7 @@ dist/
 # Logs
 *.log
 test*
-# Binary files - should be built in CI/CD, not committed
+# Binary files - local builds should use go run, CI builds artifacts in dist/
+claude-reactor
 claude-reactor-*
 !cmd/claude-reactor

@@ -56,6 +56,7 @@ help: ## Display this help message
 	@echo "    make run              # Start container (auto-detects variant)"
 	@echo "    make config           # Check current configuration"
 	@echo "    make run-go           # Force Go variant"
+	@echo "    go run ./cmd/...      # Run locally without building"
 	@echo ""
 	@echo "  $(BLUE)Reactor-Fabric:$(NC)"
 	@echo "    make build-fabric     # Build reactor-fabric binaries"
@@ -69,8 +70,8 @@ help: ## Display this help message
 	@echo "    make test-unit        # Quick unit tests only"
 	@echo ""
 	@echo "  $(BLUE)Building:$(NC)"
-	@echo "    make build            # Build binaries for all platforms"
-	@echo "    make build-local      # Build binary for current platform only"
+	@echo "    make build            # Build dist/ binaries for all platforms"
+	@echo "    make build-local      # Build dist/ binary for current platform only"
 	@echo "    make build-all        # Build Docker container variants"
 	@echo ""
 	@echo "  $(BLUE)Installation:$(NC)"
@@ -229,14 +230,15 @@ demo-quick: ## Run quick demo without Docker builds
 ##@ Go Development
 
 .PHONY: build
-build: go-mod-tidy build-apps ## Build all applications (claude-reactor and reactor-fabric)
+build: go-mod-tidy build-apps ## Build all applications (reactor-fabric and test-client) - use dist/ binaries for production
 
 .PHONY: build-local
-build-local: go-mod-tidy ## Build claude-reactor binary for current platform only (faster)
-	@echo "$(BLUE)Building claude-reactor for current platform...$(NC)"
+build-local: go-mod-tidy ## Build dist/ binary for current platform only (faster)
+	@echo "$(BLUE)Building claude-reactor for current platform in dist/...$(NC)"
+	@mkdir -p dist
 	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o claude-reactor ./cmd/claude-reactor
-	@echo "$(GREEN)✓ Local binary built: claude-reactor$(NC)"
+		-o dist/claude-reactor-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE) ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Local binary built: dist/claude-reactor-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE)$(NC)"
 
 .PHONY: go-build
 go-build: build ## Build Go binary (alias for build)
@@ -271,7 +273,7 @@ build-fabric: go-mod-tidy ## Build reactor-fabric binaries for all major archite
 	@echo "$(GREEN)✓ Reactor-fabric binaries built in dist/$(NC)"
 
 .PHONY: build-apps
-build-apps: build-reactor build-fabric build-test-client ## Build all applications
+build-apps: build-reactor build-fabric build-test-client ## Build all applications (binaries in dist/)
 
 .PHONY: build-test-client
 build-test-client: go-mod-tidy ## Build test client for reactor-fabric
@@ -414,39 +416,39 @@ fabric-validate: ## Validate reactor-fabric configuration
 	fi
 
 .PHONY: run-base
-run-base: ## Run base variant container (delegates to claude-reactor)
+run-base: ## Run base variant container (uses go run)
 	@echo "$(BLUE)Starting base variant container...$(NC)"
-	./claude-reactor run --image base
+	go run ./cmd/claude-reactor run --image base
 
 .PHONY: run-go
-run-go: ## Run Go variant container (delegates to claude-reactor)
+run-go: ## Run Go variant container (uses go run)
 	@echo "$(BLUE)Starting Go variant container...$(NC)"
-	./claude-reactor run --image go
+	go run ./cmd/claude-reactor run --image go
 
 .PHONY: run-full
-run-full: ## Run full variant container (delegates to claude-reactor)
+run-full: ## Run full variant container (uses go run)
 	@echo "$(BLUE)Starting full variant container...$(NC)"
-	./claude-reactor run --image full
+	go run ./cmd/claude-reactor run --image full
 
 .PHONY: run-cloud
-run-cloud: ## Run cloud variant container (delegates to claude-reactor)
+run-cloud: ## Run cloud variant container (uses go run)
 	@echo "$(BLUE)Starting cloud variant container...$(NC)"
-	./claude-reactor run --image cloud
+	go run ./cmd/claude-reactor run --image cloud
 
 .PHONY: run-k8s
-run-k8s: ## Run Kubernetes variant container (delegates to claude-reactor)
+run-k8s: ## Run Kubernetes variant container (uses go run)
 	@echo "$(BLUE)Starting Kubernetes variant container...$(NC)"
-	./claude-reactor run --image k8s
+	go run ./cmd/claude-reactor run --image k8s
 
 .PHONY: run
-run: ## Run container with auto-detected or saved variant (delegates to claude-reactor)
+run: ## Run container with auto-detected or saved variant (uses go run)
 	@echo "$(BLUE)Starting container with smart variant detection...$(NC)"
-	./claude-reactor
+	go run ./cmd/claude-reactor
 
 .PHONY: stop-all
-stop-all: ## Stop all running claude-agent containers (delegates to claude-reactor cleanup)
+stop-all: ## Stop all running claude-agent containers (uses go run)
 	@echo "$(BLUE)Stopping all claude-agent containers...$(NC)"
-	@./claude-reactor clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
+	@go run ./cmd/claude-reactor clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
 	@echo "$(GREEN)✓ All containers stopped$(NC)"
 
 .PHONY: logs
@@ -461,18 +463,18 @@ logs: ## Show logs from most recent claude-agent container
 
 .PHONY: config
 config: ## Show current claude-reactor configuration
-	@./claude-reactor config show
+	@go run ./cmd/claude-reactor config show
 
 .PHONY: variants
 variants: ## List available container variants
-	@./claude-reactor debug info
+	@go run ./cmd/claude-reactor debug info
 
 ##@ Cleanup
 
 .PHONY: clean-containers
-clean-containers: ## Remove all claude-agent containers (delegates to claude-reactor)
+clean-containers: ## Remove all claude-agent containers (uses go run)
 	@echo "$(BLUE)Removing claude-agent containers...$(NC)"
-	@./claude-reactor clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
+	@go run ./cmd/claude-reactor clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
 	@echo "$(GREEN)✓ Containers cleaned$(NC)"
 
 .PHONY: clean-images
