@@ -660,9 +660,9 @@ func TestManager_CopyMainConfigToAccount(t *testing.T) {
 				return os.WriteFile(mainConfigPath, data, 0644)
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
-				mockLogger.On("Infof", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Infof", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: false,
 		},
