@@ -35,7 +35,7 @@ coverage.out
 
 # Logs
 *.log
-test*
+test*.log
 # Binary files - local builds should use go run, CI builds artifacts in dist/
 claude-reactor
 claude-reactor-*
