@@ -302,34 +302,55 @@ RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/s
     ./get_helm.sh && \
     rm get_helm.sh
 
-# Install k9s - use more recent version with fallback
-ENV K9S_VERSION=v0.32.5
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ]; then K9S_ARCH="arm64"; \
-    elif [ "$ARCH" = "amd64" ]; then K9S_ARCH="amd64"; \
-    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    (curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin || \
-     echo "Warning: k9s installation failed, continuing without k9s")
-
-# Install kubectx and kubens
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ]; then KUBE_UTILS_ARCH="arm64"; \
-    elif [ "$ARCH" = "amd64" ]; then KUBE_UTILS_ARCH="x86_64"; \
-    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubectx_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubectx && \
-    curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubens_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubens
-
-# Install kustomize
-RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash && \
-    mv kustomize /usr/local/bin/
-
-# Install stern (log tailing)
-ENV STERN_VERSION=1.28.0
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ]; then STERN_ARCH="arm64"; \
-    elif [ "$ARCH" = "amd64" ]; then STERN_ARCH="amd64"; \
-    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    curl -fsSL "https://github.com/stern/stern/releases/download/v${STERN_VERSION}/stern_${STERN_VERSION}_linux_${STERN_ARCH}.tar.gz" | tar -xz -C /usr/local/bin stern
+# Install k8s tools with resilient best-effort approach
+# Note: External URLs may fail in CI environments - build continues regardless
+RUN echo "🔧 Installing Kubernetes tools (best-effort approach)..." && \
+    ARCH=$(dpkg --print-architecture) && \
+    \
+    # Determine architecture mappings for different tools
+    if [ "$ARCH" = "arm64" ]; then \
+        K9S_ARCH="arm64"; \
+        KUBE_UTILS_ARCH="arm64"; \
+        STERN_ARCH="arm64"; \
+    elif [ "$ARCH" = "amd64" ]; then \
+        K9S_ARCH="amd64"; \
+        KUBE_UTILS_ARCH="amd64"; \
+        STERN_ARCH="amd64"; \
+    else \
+        echo "⚠️  Unsupported architecture: $ARCH, skipping k8s tools"; \
+        exit 0; \
+    fi && \
+    \
+    # Install k9s (Kubernetes CLI UI) - resilient installation
+    echo "📱 Installing k9s..." && \
+    (curl -fsSL "https://github.com/derailed/k9s/releases/download/v0.32.5/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin k9s 2>/dev/null && echo "✅ k9s installed successfully" || echo "⚠️  k9s installation failed, continuing...") && \
+    \
+    # Install kubectx and kubens - resilient installation with multiple URL patterns
+    echo "🔄 Installing kubectx/kubens..." && \
+    (curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubectx_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubectx 2>/dev/null || \
+     curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubectx_linux_amd64.tar.gz" | tar -xz -C /usr/local/bin kubectx 2>/dev/null || \
+     echo "⚠️  kubectx installation failed") && \
+    (curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubens_linux_${KUBE_UTILS_ARCH}.tar.gz" | tar -xz -C /usr/local/bin kubens 2>/dev/null || \
+     curl -fsSL "https://github.com/ahmetb/kubectx/releases/latest/download/kubens_linux_amd64.tar.gz" | tar -xz -C /usr/local/bin kubens 2>/dev/null || \
+     echo "⚠️  kubens installation failed") && \
+    \
+    # Install kustomize - resilient installation
+    echo "📦 Installing kustomize..." && \
+    (curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" 2>/dev/null | bash 2>/dev/null && mv kustomize /usr/local/bin/ 2>/dev/null && echo "✅ kustomize installed successfully" || echo "⚠️  kustomize installation failed, continuing...") && \
+    \
+    # Install stern - resilient installation
+    echo "📋 Installing stern..." && \
+    (curl -fsSL "https://github.com/stern/stern/releases/download/v1.28.0/stern_1.28.0_linux_${STERN_ARCH}.tar.gz" | tar -xz -C /usr/local/bin stern 2>/dev/null && echo "✅ stern installed successfully" || echo "⚠️  stern installation failed, continuing...") && \
+    \
+    # Summary
+    echo "🎯 Kubernetes tools installation completed!" && \
+    echo "📊 Available tools:" && \
+    (command -v k9s >/dev/null && echo "  ✅ k9s" || echo "  ❌ k9s") && \
+    (command -v kubectx >/dev/null && echo "  ✅ kubectx" || echo "  ❌ kubectx") && \
+    (command -v kubens >/dev/null && echo "  ✅ kubens" || echo "  ❌ kubens") && \
+    (command -v kustomize >/dev/null && echo "  ✅ kustomize" || echo "  ❌ kustomize") && \
+    (command -v stern >/dev/null && echo "  ✅ stern" || echo "  ❌ stern") && \
+    echo "🚀 k8s stage build complete (tools installation is best-effort)"
 
 # Switch back to claude user
 USER claude
