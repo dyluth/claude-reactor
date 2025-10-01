@@ -49,6 +49,10 @@ claude-reactor info cache info`,
 			Short: "Show debug status",
 			Long:  "Display current debug mode and logging configuration.",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Handle help case when app is nil
+				if app == nil {
+					return cmd.Help()
+				}
 				cmd.Printf("Debug Mode: %v\n", app.Debug)
 
 				// Try to get log level through interface or fallback
@@ -65,6 +69,10 @@ claude-reactor info cache info`,
 			Short: "Show system information",
 			Long:  "Display comprehensive system information including Docker connectivity, architecture, and version details.",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Handle help case when app is nil
+				if app == nil {
+					return cmd.Help()
+				}
 				app.Logger.Info("=== Claude-Reactor Debug Info ===")
 
 				// Architecture information
@@ -121,6 +129,10 @@ claude-reactor debug image python:3.11 --verbose
 claude-reactor debug image ghcr.io/user/project:latest`,
 			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Handle help case when app is nil
+				if app == nil {
+					return cmd.Help()
+				}
 				imageName := args[0]
 				ctx := cmd.Context()
 
@@ -203,6 +215,10 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 			Short: "Show cache statistics",
 			Long:  "Display information about cached image validation results.",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Handle help case when app is nil
+				if app == nil {
+					return cmd.Help()
+				}
 				// This would require implementing cache info functionality
 				// For now, just show a placeholder
 				cmd.Printf("Cache directory: ~/.claude-reactor/image-cache/\n")
@@ -216,6 +232,10 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 			Short: "Clear validation cache",
 			Long:  "Remove all cached image validation results, forcing re-validation on next use.",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// Handle help case when app is nil
+				if app == nil {
+					return cmd.Help()
+				}
 				// Ensure Docker components are initialized
 				if err := reactor.EnsureDockerComponents(app); err != nil {
 					cmd.Printf("❌ Docker not available: %v\n", err)

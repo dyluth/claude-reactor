@@ -19,6 +19,10 @@ func NewCleanCmd(app *pkg.AppContainer) *cobra.Command {
 		Short: "Remove containers, sessions, and authentication data",
 		Long: `Remove claude-reactor containers and data with granular cleanup levels.
 
+Scope:
+  clean                     Current project only (default)
+  clean --global            All projects and accounts
+
 Cleanup Levels:
   clean                     Containers only (default)
   clean --sessions          Containers + session data (conversation history)  
@@ -29,10 +33,17 @@ Additional Options:
   --images                  Also remove Docker images
   --cache                   Clear image validation cache`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return cleanContainers(cmd, app)
 		},
 	}
 
+	// Scope flags
+	cleanCmd.Flags().BoolP("global", "g", false, "Clean all projects and accounts (default: current project only)")
+	
 	// Cleanup level flags (mutually exclusive)
 	cleanCmd.Flags().BoolP("sessions", "s", false, "Remove containers + session data")
 	cleanCmd.Flags().BoolP("auth", "", false, "Remove containers + session data + credentials")
@@ -50,7 +61,8 @@ Additional Options:
 func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	ctx := cmd.Context()
 
-	// Parse cleanup level flags
+	// Parse scope and cleanup level flags
+	global, _ := cmd.Flags().GetBool("global")
 	sessions, _ := cmd.Flags().GetBool("sessions")
 	auth, _ := cmd.Flags().GetBool("auth")
 	all, _ := cmd.Flags().GetBool("all")
@@ -68,11 +80,12 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	}
 	if all {
 		cleanupLevel = "all"
+		global = true // --all implies --global
 	}
 
 	// Show what will be cleaned and ask for confirmation if not forced
 	if !force {
-		if err := showCleanupPlan(cleanupLevel, images, cache, app); err != nil {
+		if err := showCleanupPlan(cleanupLevel, global, images, cache, app); err != nil {
 			return err
 		}
 		
@@ -93,27 +106,27 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	app.Logger.Infof("🧹 Starting cleanup (level: %s)...", cleanupLevel)
 
 	// Step 1: Clean containers (all levels include this)
-	if err := cleanContainersLevel(ctx, app, all); err != nil {
+	if err := cleanContainersLevel(ctx, app, global); err != nil {
 		return err
 	}
 
 	// Step 2: Clean session data (sessions, auth, all levels)
 	if cleanupLevel == "sessions" || cleanupLevel == "auth" || cleanupLevel == "all" {
-		if err := cleanSessionsLevel(app, all); err != nil {
+		if err := cleanSessionsLevel(app, global); err != nil {
 			return err
 		}
 	}
 
 	// Step 3: Clean authentication data (auth, all levels)
 	if cleanupLevel == "auth" || cleanupLevel == "all" {
-		if err := cleanAuthLevel(app, all); err != nil {
+		if err := cleanAuthLevel(app, global); err != nil {
 			return err
 		}
 	}
 
 	// Step 4: Clean images if requested
 	if images {
-		if err := cleanImagesLevel(ctx, app, all); err != nil {
+		if err := cleanImagesLevel(ctx, app, global); err != nil {
 			return err
 		}
 	}
@@ -130,8 +143,15 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 }
 
 // showCleanupPlan displays what will be cleaned and asks for confirmation
-func showCleanupPlan(cleanupLevel string, images, cache bool, app *pkg.AppContainer) error {
+func showCleanupPlan(cleanupLevel string, global bool, images, cache bool, app *pkg.AppContainer) error {
 	app.Logger.Info("🧹 Cleanup Plan:")
+	
+	// Show scope
+	if global {
+		app.Logger.Info("  📍 Scope: All projects and accounts")
+	} else {
+		app.Logger.Info("  📍 Scope: Current project only")
+	}
 	
 	switch cleanupLevel {
 	case "containers":
@@ -162,8 +182,8 @@ func showCleanupPlan(cleanupLevel string, images, cache bool, app *pkg.AppContai
 }
 
 // cleanContainersLevel removes containers
-func cleanContainersLevel(ctx context.Context, app *pkg.AppContainer, all bool) error {
-	if all {
+func cleanContainersLevel(ctx context.Context, app *pkg.AppContainer, global bool) error {
+	if global {
 		app.Logger.Info("🗑️ Removing all claude-reactor containers...")
 		err := app.DockerMgr.CleanAllContainers(ctx)
 		if err != nil {
@@ -209,7 +229,7 @@ func cleanContainersLevel(ctx context.Context, app *pkg.AppContainer, all bool) 
 }
 
 // cleanSessionsLevel removes session data (conversation history, etc.)
-func cleanSessionsLevel(app *pkg.AppContainer, all bool) error {
+func cleanSessionsLevel(app *pkg.AppContainer, global bool) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -217,7 +237,7 @@ func cleanSessionsLevel(app *pkg.AppContainer, all bool) error {
 
 	claudeReactorDir := filepath.Join(homeDir, ".claude-reactor")
 
-	if all {
+	if global {
 		app.Logger.Info("🗂️ Removing all session data...")
 		
 		// Remove all account session directories but preserve auth files
@@ -268,7 +288,7 @@ func cleanSessionsLevel(app *pkg.AppContainer, all bool) error {
 }
 
 // cleanAuthLevel removes authentication data (Claude configs, API keys)
-func cleanAuthLevel(app *pkg.AppContainer, all bool) error {
+func cleanAuthLevel(app *pkg.AppContainer, global bool) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -276,7 +296,7 @@ func cleanAuthLevel(app *pkg.AppContainer, all bool) error {
 
 	claudeReactorDir := filepath.Join(homeDir, ".claude-reactor")
 
-	if all {
+	if global {
 		app.Logger.Info("🔑 Removing all authentication data...")
 		
 		// Remove all .{account}-claude.json and .claude-reactor-{account}-env files
@@ -335,10 +355,10 @@ func cleanAuthLevel(app *pkg.AppContainer, all bool) error {
 }
 
 // cleanImagesLevel removes Docker images
-func cleanImagesLevel(ctx context.Context, app *pkg.AppContainer, all bool) error {
+func cleanImagesLevel(ctx context.Context, app *pkg.AppContainer, global bool) error {
 	app.Logger.Info("📦 Removing Docker images...")
 	
-	err := app.DockerMgr.CleanImages(ctx, all)
+	err := app.DockerMgr.CleanImages(ctx, global)
 	if err != nil {
 		return fmt.Errorf("failed to clean images: %w", err)
 	}

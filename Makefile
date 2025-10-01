@@ -68,6 +68,7 @@ help: ## Display this help message
 	@echo "    make test             # Run complete test suite"
 	@echo "    make demo             # Interactive feature demo"
 	@echo "    make test-unit        # Quick unit tests only"
+	@echo "    make coverage-report  # Unit tests with coverage analysis"
 	@echo ""
 	@echo "  $(BLUE)Building:$(NC)"
 	@echo "    make build            # Build dist/ binaries for all platforms"
@@ -171,6 +172,23 @@ test-go-unit: ## Run Go unit tests
 	@echo "$(BLUE)Running Go unit tests...$(NC)"
 	@go test -count=1 -timeout=30s ./internal/... ./pkg/... ./cmd/... || (echo "$(RED)✗ Go unit tests failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Go unit tests completed$(NC)"
+
+.PHONY: test-go-unit-coverage
+test-go-unit-coverage: ## Run Go unit tests with coverage reporting
+	@echo "$(BLUE)Running Go unit tests with coverage...$(NC)"
+	@mkdir -p coverage
+	@go test -count=1 -timeout=30s -coverprofile=coverage/coverage.out -covermode=atomic ./internal/... ./pkg/... ./cmd/... || (echo "$(RED)✗ Go unit tests failed$(NC)" && exit 1)
+	@go tool cover -html=coverage/coverage.out -o coverage/coverage.html
+	@go tool cover -func=coverage/coverage.out | tail -1 | awk '{print "$(BLUE)Total Coverage: $(GREEN)" $$3 "$(NC)"}'
+	@echo "$(GREEN)✓ Go unit tests with coverage completed$(NC)"
+	@echo "$(BLUE)Coverage report generated:$(NC)"
+	@echo "  HTML: coverage/coverage.html"
+	@echo "  Data: coverage/coverage.out"
+
+.PHONY: coverage-report
+coverage-report: test-go-unit-coverage ## Generate and show detailed coverage report
+	@echo "$(BLUE)Detailed Coverage Report:$(NC)"
+	@go tool cover -func=coverage/coverage.out
 
 .PHONY: test-go-integration
 test-go-integration: ## Run Go integration tests (requires Docker)

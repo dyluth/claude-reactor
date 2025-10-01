@@ -32,6 +32,10 @@ func newConfigShowCmd(app *pkg.AppContainer) *cobra.Command {
 		Use:   "show",
 		Short: "Show current configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return showEnhancedConfig(cmd, app)
 		},
 	}
@@ -42,6 +46,10 @@ func newConfigValidateCmd(app *pkg.AppContainer) *cobra.Command {
 		Use:   "validate",
 		Short: "Validate current configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return validateConfig(cmd, app)
 		},
 	}
@@ -53,6 +61,10 @@ func newConfigSetCmd(app *pkg.AppContainer) *cobra.Command {
 		Short: "Set configuration value",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return setConfigValue(cmd, args, app)
 		},
 	}

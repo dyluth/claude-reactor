@@ -10,6 +10,7 @@ support-bot-test/
 test-project/
 *-test/
 dist/
+coverage/
 
 # Environment files containing API keys
 .env

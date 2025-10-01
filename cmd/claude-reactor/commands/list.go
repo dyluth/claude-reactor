@@ -46,6 +46,10 @@ func NewListCmd(app *pkg.AppContainer) *cobra.Command {
 Shows account isolation, project-specific sessions, and container status.
 Use --json for machine-readable output.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return RunList(cmd, app)
 		},
 	}

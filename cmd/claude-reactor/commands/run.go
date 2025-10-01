@@ -72,6 +72,10 @@ Related Commands:
   claude-reactor clean         Remove containers
   claude-reactor config show   View current configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 			return RunContainer(cmd, app)
 		},
 	}
