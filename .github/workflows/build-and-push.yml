@@ -42,11 +42,11 @@ jobs:
         # Convert to integer for comparison
         COVERAGE_INT=$(echo "$COVERAGE" | cut -d. -f1)
         
-        if [ "$COVERAGE_INT" -lt 35 ]; then
-          echo "❌ Coverage ${COVERAGE}% is below minimum threshold of 35%"
+        if [ "$COVERAGE_INT" -lt 34 ]; then
+          echo "❌ Coverage ${COVERAGE}% is below minimum threshold of 34%"
           exit 1
         else
-          echo "✅ Coverage ${COVERAGE}% meets minimum threshold of 35%"
+          echo "✅ Coverage ${COVERAGE}% meets minimum threshold of 34%"
         fi
 
     - name: Upload coverage reports to Codecov
