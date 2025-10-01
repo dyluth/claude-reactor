@@ -58,12 +58,6 @@ help: ## Display this help message
 	@echo "    make run-go           # Force Go variant"
 	@echo "    go run ./cmd/...      # Run locally without building"
 	@echo ""
-	@echo "  $(BLUE)Reactor-Fabric:$(NC)"
-	@echo "    make build-fabric     # Build reactor-fabric binaries"
-	@echo "    make fabric-config    # Generate default configuration"
-	@echo "    make run-fabric       # Start orchestrator"
-	@echo "    make fabric-validate  # Validate configuration"
-	@echo ""
 	@echo "  $(BLUE)Testing:$(NC)"
 	@echo "    make test             # Run complete test suite"
 	@echo "    make demo             # Interactive feature demo"
@@ -248,7 +242,7 @@ demo-quick: ## Run quick demo without Docker builds
 ##@ Go Development
 
 .PHONY: build
-build: go-mod-tidy build-apps ## Build all applications (reactor-fabric and test-client) - use dist/ binaries for production
+build: go-mod-tidy build-apps ## Build all applications - use dist/ binaries for production
 
 .PHONY: build-local
 build-local: go-mod-tidy ## Build dist/ binary for current platform only (faster)
@@ -276,30 +270,8 @@ build-reactor: go-mod-tidy ## Build claude-reactor binaries for all major archit
 		-o dist/claude-reactor-darwin-arm64 ./cmd/claude-reactor
 	@echo "$(GREEN)✓ Claude-reactor binaries built in dist/$(NC)"
 
-.PHONY: build-fabric
-build-fabric: go-mod-tidy ## Build reactor-fabric binaries for all major architectures
-	@echo "$(BLUE)Building reactor-fabric binaries for all platforms...$(NC)"
-	@mkdir -p dist
-	@GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o dist/reactor-fabric-linux-amd64 ./cmd/reactor-fabric
-	@GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o dist/reactor-fabric-linux-arm64 ./cmd/reactor-fabric
-	@GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o dist/reactor-fabric-darwin-amd64 ./cmd/reactor-fabric
-	@GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o dist/reactor-fabric-darwin-arm64 ./cmd/reactor-fabric
-	@echo "$(GREEN)✓ Reactor-fabric binaries built in dist/$(NC)"
-
 .PHONY: build-apps
-build-apps: build-reactor build-fabric build-test-client ## Build all applications (binaries in dist/)
-
-.PHONY: build-test-client
-build-test-client: go-mod-tidy ## Build test client for reactor-fabric
-	@echo "$(BLUE)Building test-client binary...$(NC)"
-	@mkdir -p dist
-	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
-		-o dist/test-client ./cmd/test-client
-	@echo "$(GREEN)✓ Test client built: dist/test-client$(NC)"
+build-apps: build-reactor ## Build all applications (binaries in dist/)
 
 .PHONY: install
 install: ## Install claude-reactor to system PATH using INSTALL script
@@ -397,41 +369,6 @@ test-persistence: ## Test Claude CLI configuration persistence across container 
 
 ##@ Container Management
 
-.PHONY: run-fabric
-run-fabric: ## Start reactor-fabric orchestrator
-	@echo "$(BLUE)Starting Reactor-Fabric orchestrator...$(NC)"
-	@if [ -f "./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE)" ]; then \
-		./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE) start ; \
-	elif [ -f "./reactor-fabric" ]; then \
-		./reactor-fabric start ; \
-	else \
-		echo "$(RED)Error: reactor-fabric binary not found. Run 'make build-fabric' first.$(NC)" ; \
-		exit 1 ; \
-	fi
-
-.PHONY: fabric-config
-fabric-config: ## Generate default reactor-fabric configuration
-	@echo "$(BLUE)Generating default reactor-fabric configuration...$(NC)"
-	@if [ -f "./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE)" ]; then \
-		./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE) init ; \
-	elif [ -f "./reactor-fabric" ]; then \
-		./reactor-fabric init ; \
-	else \
-		echo "$(RED)Error: reactor-fabric binary not found. Run 'make build-fabric' first.$(NC)" ; \
-		exit 1 ; \
-	fi
-
-.PHONY: fabric-validate
-fabric-validate: ## Validate reactor-fabric configuration
-	@echo "$(BLUE)Validating reactor-fabric configuration...$(NC)"
-	@if [ -f "./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE)" ]; then \
-		./dist/reactor-fabric-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE) validate ; \
-	elif [ -f "./reactor-fabric" ]; then \
-		./reactor-fabric validate ; \
-	else \
-		echo "$(RED)Error: reactor-fabric binary not found. Run 'make build-fabric' first.$(NC)" ; \
-		exit 1 ; \
-	fi
 
 .PHONY: run-base
 run-base: ## Run base variant container (uses go run)

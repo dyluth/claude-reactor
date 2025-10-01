@@ -49,11 +49,9 @@ This project creates a modular Docker containerization system for Claude CLI wit
 ```
 claude-reactor/
 ├── cmd/                       # Application entrypoints
-│   ├── claude-reactor/        # Main claude-reactor application
-│   └── reactor-fabric/        # Distributed MCP orchestrator (Phase 0+)
+│   └── claude-reactor/        # Main claude-reactor application
 ├── internal/                  # Private application logic
-│   ├── reactor/               # Claude-reactor specific implementation
-│   └── fabric/                # Reactor-fabric orchestrator implementation
+│   └── reactor/               # Claude-reactor specific implementation
 ├── pkg/                       # Shared data structures and utilities
 ├── Dockerfile                 # Multi-stage container definitions
 ├── Makefile                   # Professional build automation (25+ targets)

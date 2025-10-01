@@ -329,8 +329,3 @@ func (app *AppContainer) EnsureDockerComponents() error {
 	return fmt.Errorf("EnsureDockerComponents should be called through the container implementation")
 }
 
-// FabricOrchestrator interface for the reactor-fabric orchestrator
-type FabricOrchestrator interface {
-	// Start starts the orchestrator with the given configuration
-	Start(ctx context.Context, configPath, listenAddr string) error
-}
