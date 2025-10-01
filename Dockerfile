@@ -296,11 +296,11 @@ FROM full AS k8s
 # Switch to root for installations
 USER root
 
-# Install Helm using modern keyring method
-RUN curl -fsSL https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /usr/share/keyrings/helm.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list && \
-    apt-get update && apt-get install -y helm && \
-    rm -rf /var/lib/apt/lists/*
+# Install Helm using official installation script (more reliable than GPG key method)
+RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
+    chmod 700 get_helm.sh && \
+    ./get_helm.sh && \
+    rm get_helm.sh
 
 # Install k9s
 ENV K9S_VERSION=v0.29.1
