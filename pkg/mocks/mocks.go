@@ -50,6 +50,21 @@ func (m *MockConfigManager) ListAccounts() ([]string, error) {
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *MockConfigManager) DetectSSHAgent() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockConfigManager) ValidateSSHAgent(socketPath string) error {
+	args := m.Called(socketPath)
+	return args.Error(0)
+}
+
+func (m *MockConfigManager) PrepareSSHMounts(sshAgent bool, socketPath string) ([]pkg.Mount, error) {
+	args := m.Called(sshAgent, socketPath)
+	return args.Get(0).([]pkg.Mount), args.Error(1)
+}
+
 // MockDockerManager is a mock implementation of DockerManager
 type MockDockerManager struct {
 	mock.Mock

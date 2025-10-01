@@ -41,6 +41,8 @@ Examples:
   claude-reactor run --account work           # Use specific account configuration
   claude-reactor run --account work --apikey sk-ant-xxx  # Set API key for work account
   claude-reactor run --account new --interactive-login   # Force interactive login for new account
+  claude-reactor run --ssh-agent              # Enable SSH agent forwarding (auto-detect)
+  claude-reactor run --ssh-agent=/tmp/ssh.sock # SSH agent with explicit socket path
   claude-reactor run --no-persist             # Remove container when finished
 
   # Registry control (v2 images)
@@ -88,6 +90,7 @@ Related Commands:
 	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode (--dangerously-skip-permissions)")
 	runCmd.Flags().BoolP("host-docker", "", false, "Enable host Docker socket access (⚠️  SECURITY: grants host-level Docker privileges)")
 	runCmd.Flags().StringP("host-docker-timeout", "", "5m", "Timeout for Docker operations (use '0' to disable timeout)")
+	runCmd.Flags().StringP("ssh-agent", "", "", "Enable SSH agent forwarding (auto-detect or specify socket path)")
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
 	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
@@ -118,6 +121,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	danger, _ := cmd.Flags().GetBool("danger")
 	hostDocker, _ := cmd.Flags().GetBool("host-docker")
 	hostDockerTimeout, _ := cmd.Flags().GetString("host-docker-timeout")
+	sshAgent, _ := cmd.Flags().GetString("ssh-agent")
 	shell, _ := cmd.Flags().GetBool("shell")
 	mounts, _ := cmd.Flags().GetStringSlice("mount")
 	noPersist, _ := cmd.Flags().GetBool("no-persist")
@@ -138,7 +142,8 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	hasArgs := cmd.Flags().Changed("image") || cmd.Flags().Changed("account") || 
 			   cmd.Flags().Changed("danger") || cmd.Flags().Changed("shell") ||
 			   cmd.Flags().Changed("no-persist") || cmd.Flags().Changed("host-docker") ||
-			   cmd.Flags().Changed("host-docker-timeout") || cmd.Flags().Changed("apikey") ||
+			   cmd.Flags().Changed("host-docker-timeout") || cmd.Flags().Changed("ssh-agent") ||
+			   cmd.Flags().Changed("apikey") ||
 			   cmd.Flags().Changed("interactive-login") || cmd.Flags().Changed("no-mounts") ||
 			   cmd.Flags().Changed("dev") || cmd.Flags().Changed("registry-off") ||
 			   cmd.Flags().Changed("pull-latest") || cmd.Flags().Changed("no-continue") ||
@@ -226,6 +231,65 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 
 		// Display security warning for host Docker access
 		displayHostDockerSecurityWarning(app.Logger, hostDockerTimeout)
+	}
+
+	// Handle SSH agent configuration with persistence logic
+	var sshAgentEnabled bool
+	var sshAgentSocket string
+	
+	if cmd.Flags().Changed("ssh-agent") {
+		// SSH agent flag was provided (with or without value)
+		sshAgentEnabled = true
+		
+		if sshAgent == "" || sshAgent == "auto" {
+			// Auto-detect SSH agent socket
+			detectedSocket, err := app.ConfigMgr.DetectSSHAgent()
+			if err != nil {
+				return fmt.Errorf("failed to detect SSH agent: %w", err)
+			}
+			sshAgentSocket = detectedSocket
+			config.SSHAgentSocket = "auto"
+			app.Logger.Info("🔑 SSH agent auto-detected and will be persisted")
+		} else {
+			// Explicit socket path provided
+			sshAgentSocket = sshAgent
+			config.SSHAgentSocket = sshAgent
+			app.Logger.Infof("🔑 SSH agent socket specified: %s (will be persisted)", sshAgent)
+		}
+		
+		// Validate SSH agent connectivity
+		if err := app.ConfigMgr.ValidateSSHAgent(sshAgentSocket); err != nil {
+			return fmt.Errorf("SSH agent validation failed: %w", err)
+		}
+		
+		config.SSHAgent = true
+		app.Logger.Info("✅ SSH agent validation passed")
+	} else if config.SSHAgent {
+		// Use persistent SSH agent setting
+		sshAgentEnabled = true
+		if config.SSHAgentSocket == "auto" || config.SSHAgentSocket == "" {
+			// Re-detect for auto mode
+			detectedSocket, err := app.ConfigMgr.DetectSSHAgent()
+			if err != nil {
+				app.Logger.Warnf("Failed to re-detect SSH agent, disabling: %v", err)
+				config.SSHAgent = false
+				sshAgentEnabled = false
+			} else {
+				sshAgentSocket = detectedSocket
+				app.Logger.Info("🔑 Using persistent SSH agent setting (auto-detected)")
+			}
+		} else {
+			// Use explicit socket from config
+			sshAgentSocket = config.SSHAgentSocket
+			app.Logger.Infof("🔑 Using persistent SSH agent setting: %s", sshAgentSocket)
+			
+			// Re-validate socket
+			if err := app.ConfigMgr.ValidateSSHAgent(sshAgentSocket); err != nil {
+				app.Logger.Warnf("Persistent SSH agent socket invalid, disabling: %v", err)
+				config.SSHAgent = false
+				sshAgentEnabled = false
+			}
+		}
 	}
 
 	// Handle authentication flags
@@ -405,6 +469,8 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		RunClaudeUpgrade: true,  // Run claude upgrade after container startup
 		HostDocker:       hostDocker,
 		HostDockerTimeout: hostDockerTimeout,
+		SSHAgent:         sshAgentEnabled,
+		SSHAgentSocket:   sshAgentSocket,
 	}
 
 	// Add mounts (skip if requested for testing)
@@ -620,6 +686,30 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 		} else {
 			return fmt.Errorf("host Docker requested but socket not available at %s\n💡 Mount Docker socket: -v /var/run/docker.sock:/var/run/docker.sock\n💡 Add docker group: --group-add docker\n💡 See documentation: claude-reactor help docker-setup", dockerSock)
 		}
+	}
+
+	// Add SSH agent mounts if SSH agent forwarding is enabled
+	if containerConfig.SSHAgent {
+		sshMounts, err := app.ConfigMgr.PrepareSSHMounts(containerConfig.SSHAgent, containerConfig.SSHAgentSocket)
+		if err != nil {
+			return fmt.Errorf("failed to prepare SSH mounts: %w", err)
+		}
+		
+		for _, mount := range sshMounts {
+			err = app.MountMgr.AddMountToConfig(containerConfig, mount.Source, mount.Target)
+			if err != nil {
+				app.Logger.Warnf("Failed to add SSH mount %s -> %s: %v", mount.Source, mount.Target, err)
+			} else {
+				app.Logger.Infof("🔑 SSH mount: %s -> %s", mount.Source, mount.Target)
+			}
+		}
+		
+		// Set SSH_AUTH_SOCK environment variable in container
+		if containerConfig.Environment == nil {
+			containerConfig.Environment = make(map[string]string)
+		}
+		containerConfig.Environment["SSH_AUTH_SOCK"] = "/ssh-agent.sock"
+		app.Logger.Info("🔑 SSH agent environment configured")
 	}
 
 	// Add user-specified mounts

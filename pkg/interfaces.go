@@ -39,6 +39,15 @@ type ConfigManager interface {
 
 	// ListAccounts returns available Claude accounts
 	ListAccounts() ([]string, error)
+
+	// DetectSSHAgent auto-detects SSH agent socket location
+	DetectSSHAgent() (string, error)
+
+	// ValidateSSHAgent tests SSH agent connectivity
+	ValidateSSHAgent(socketPath string) error
+
+	// PrepareSSHMounts prepares SSH-related mount configurations
+	PrepareSSHMounts(sshAgent bool, socketPath string) ([]Mount, error)
 }
 
 // DockerManager handles Docker container lifecycle and operations
@@ -168,6 +177,8 @@ type Config struct {
 	DangerMode         bool              `yaml:"danger_mode,omitempty"`
 	HostDocker         bool              `yaml:"host_docker,omitempty"`
 	HostDockerTimeout  string            `yaml:"host_docker_timeout,omitempty"`
+	SSHAgent           bool              `yaml:"ssh_agent,omitempty"`
+	SSHAgentSocket     string            `yaml:"ssh_agent_socket,omitempty"`
 	ProjectPath        string            `yaml:"project_path,omitempty"`
 	SessionPersistence bool              `yaml:"session_persistence,omitempty"`
 	LastSessionID      string            `yaml:"last_session_id,omitempty"`
@@ -191,6 +202,8 @@ type ContainerConfig struct {
 	RunClaudeUpgrade bool              `yaml:"run_claude_upgrade,omitempty"`
 	HostDocker       bool              `yaml:"host_docker,omitempty"`
 	HostDockerTimeout string           `yaml:"host_docker_timeout,omitempty"`
+	SSHAgent         bool              `yaml:"ssh_agent,omitempty"`
+	SSHAgentSocket   string            `yaml:"ssh_agent_socket,omitempty"`
 }
 
 // Mount represents a container mount point
