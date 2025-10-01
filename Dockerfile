@@ -302,13 +302,14 @@ RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/s
     ./get_helm.sh && \
     rm get_helm.sh
 
-# Install k9s
-ENV K9S_VERSION=v0.29.1
+# Install k9s - use more recent version with fallback
+ENV K9S_VERSION=v0.32.5
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then K9S_ARCH="arm64"; \
-    elif [ "$ARCH" = "amd64" ]; then K9S_ARCH="x86_64"; \
+    elif [ "$ARCH" = "amd64" ]; then K9S_ARCH="amd64"; \
     else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin
+    (curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin || \
+     echo "Warning: k9s installation failed, continuing without k9s")
 
 # Install kubectx and kubens
 RUN ARCH=$(dpkg --print-architecture) && \
