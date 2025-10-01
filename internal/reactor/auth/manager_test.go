@@ -99,8 +99,9 @@ func TestManager_GetAuthConfig(t *testing.T) {
 				return os.WriteFile(configPath, []byte(invalidJson), 0644)
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 			expectNil:   true,
@@ -175,9 +176,9 @@ func TestManager_SetupAuth(t *testing.T) {
 				return os.WriteFile(mainConfigPath, data, 0644)
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
-				mockLogger.On("Infof", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Infof", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: false,
 		},
@@ -211,8 +212,9 @@ func TestManager_SetupAuth(t *testing.T) {
 				return nil
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 		},
@@ -224,8 +226,9 @@ func TestManager_SetupAuth(t *testing.T) {
 				return nil
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 		},
@@ -322,8 +325,9 @@ func TestManager_ValidateAuth(t *testing.T) {
 				return nil
 			},
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 		},
@@ -528,8 +532,9 @@ func TestManager_SaveAPIKey(t *testing.T) {
 			account: "",
 			apiKey:  "sk-ant-test-key-123",
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 		},
@@ -538,8 +543,9 @@ func TestManager_SaveAPIKey(t *testing.T) {
 			account: "test-account",
 			apiKey:  "",
 			setupMocks: func(mockLogger *mocks.MockLogger) {
-			mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 				mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+				mockLogger.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Maybe()
 			},
 			expectError: true,
 		},
