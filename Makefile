@@ -466,7 +466,7 @@ ci-test: dev-setup test-unit test-integration-quick ## Run CI-appropriate tests
 	@echo "$(GREEN)✓ CI tests completed$(NC)"
 
 .PHONY: ci-build
-ci-build: go-mod-tidy build-all ## Build core variants for CI
+ci-build: go-mod-tidy build build-all ## Build core variants for CI
 	@echo "$(GREEN)✓ CI build completed$(NC)"
 
 .PHONY: ci-full
