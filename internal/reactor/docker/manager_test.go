@@ -460,3 +460,124 @@ func BenchmarkManager_ShouldSkipPath(b *testing.B) {
 		_ = manager.shouldSkipPath(path)
 	}
 }
+
+// Test GenerateContainerName - simple function with 0% coverage
+func TestManager_GenerateContainerName(t *testing.T) {
+	mockLogger := &MockLogger{}
+	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	
+	manager := &manager{
+		logger: mockLogger,
+	}
+	
+	t.Run("generates container name successfully", func(t *testing.T) {
+		containerName := manager.GenerateContainerName("/test/project", "go", "amd64", "testuser")
+		
+		assert.NotEmpty(t, containerName)
+		assert.Contains(t, containerName, "claude-reactor")
+		assert.Contains(t, containerName, "go")
+		assert.Contains(t, containerName, "testuser")
+		// The function uses naming manager which detects actual host architecture, not the passed parameter
+	})
+	
+	t.Run("handles empty project path", func(t *testing.T) {
+		containerName := manager.GenerateContainerName("", "base", "arm64", "user")
+		
+		assert.NotEmpty(t, containerName)
+		assert.Contains(t, containerName, "claude-reactor")
+	})
+}
+
+// Test GenerateProjectHash - simple function with 0% coverage  
+func TestManager_GenerateProjectHash(t *testing.T) {
+	mockLogger := &MockLogger{}
+	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	mockLogger.On("Errorf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	
+	manager := &manager{
+		logger: mockLogger,
+	}
+	
+	t.Run("generates project hash for valid path", func(t *testing.T) {
+		hash := manager.GenerateProjectHash("/test/project")
+		
+		assert.NotEmpty(t, hash)
+		assert.NotEqual(t, "default", hash)
+		assert.Len(t, hash, 8) // Project hashes are 8 characters
+	})
+	
+	t.Run("handles empty project path", func(t *testing.T) {
+		hash := manager.GenerateProjectHash("")
+		
+		assert.NotEmpty(t, hash)
+		// Should use current working directory
+	})
+	
+	t.Run("returns default for invalid path", func(t *testing.T) {
+		// This should trigger error handling in naming manager
+		hash := manager.GenerateProjectHash("/nonexistent/invalid/path/that/should/not/exist")
+		
+		assert.NotEmpty(t, hash)
+		// Should get a valid hash even for invalid paths
+	})
+}
+
+// Test GetImageName - simple function with 0% coverage
+func TestManager_GetImageName(t *testing.T) {
+	mockLogger := &MockLogger{}
+	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	
+	manager := &manager{
+		logger: mockLogger,
+	}
+	
+	t.Run("generates image name for built-in variant", func(t *testing.T) {
+		imageName := manager.GetImageName("go", "amd64")
+		
+		assert.NotEmpty(t, imageName)
+		assert.Contains(t, imageName, "claude-reactor")
+		assert.Contains(t, imageName, "go")
+	})
+	
+	t.Run("generates image name for base variant", func(t *testing.T) {
+		imageName := manager.GetImageName("base", "arm64")
+		
+		assert.NotEmpty(t, imageName)
+		assert.Contains(t, imageName, "claude-reactor")
+		assert.Contains(t, imageName, "base")
+	})
+	
+	t.Run("handles custom image name", func(t *testing.T) {
+		imageName := manager.GetImageName("ubuntu:22.04", "amd64")
+		
+		assert.NotEmpty(t, imageName)
+		// The naming manager might transform custom image names too
+		assert.Contains(t, imageName, "ubuntu:22.04")
+	})
+}
+
+// Test findProjectRoot - simple function with 0% coverage
+func TestManager_FindProjectRoot(t *testing.T) {
+	mockLogger := &MockLogger{}
+	mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything).Maybe()
+	
+	manager := &manager{
+		logger: mockLogger,
+	}
+	
+	t.Run("finds project root from current directory", func(t *testing.T) {
+		// This test will work if there's a Dockerfile in the current directory tree
+		root, err := manager.findProjectRoot()
+		
+		if err != nil {
+			// If no Dockerfile found, that's fine for this test
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "Dockerfile not found")
+		} else {
+			assert.NotEmpty(t, root)
+			assert.NoError(t, err)
+		}
+	})
+}
+

@@ -1,5 +1,9 @@
 # Claude-Reactor
 
+[![Build Status](https://github.com/dyluth/claude-reactor/workflows/Build%20and%20Push%20Docker%20Images/badge.svg)](https://github.com/dyluth/claude-reactor/actions)
+[![codecov](https://codecov.io/gh/dyluth/claude-reactor/branch/main/graph/badge.svg)](https://codecov.io/gh/dyluth/claude-reactor)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dyluth/claude-reactor)](https://goreportcard.com/report/github.com/dyluth/claude-reactor)
+
 A professional, modular Docker containerization system for Claude CLI development workflows.
 
 ## Overview

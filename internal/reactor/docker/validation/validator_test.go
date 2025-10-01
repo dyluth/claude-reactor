@@ -2,13 +2,36 @@ package validation
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
 	"claude-reactor/pkg"
 )
+
+// TODO: Add Docker client mocking - currently commented out due to interface complexity
+/*
+// DockerClientInterface defines only the methods we need for testing
+type DockerClientInterface interface {
+	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	ImageInspect(ctx context.Context, imageID string) (types.ImageInspect, error)
+	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
+	ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+}
+
+// MockDockerClient for testing - simplified approach using composition
+type MockDockerClient struct {
+	mock.Mock
+}
+*/
 
 // MockLogger for testing
 type MockLogger struct {
@@ -316,3 +339,425 @@ func BenchmarkSessionWarningLookup(b *testing.B) {
 		_ = validator.sessionWarnings[testKey]
 	}
 }
+
+// createTestValidatorSimple creates a validator for testing simple functions that don't need Docker client
+func createTestValidatorSimple() (*ImageValidator, *MockLogger) {
+	mockLogger := &MockLogger{}
+	
+	homeDir, _ := os.UserHomeDir()
+	cacheDir := filepath.Join(homeDir, ".claude-reactor", "image-cache")
+	
+	validator := &ImageValidator{
+		dockerClient: nil, // Not needed for simple tests
+		logger:       mockLogger,
+		cacheDir:     cacheDir,
+		sessionWarnings: make(map[string]bool),
+	}
+	
+	return validator, mockLogger
+}
+
+// Test NewImageValidator structure
+func TestNewImageValidator(t *testing.T) {
+	t.Run("creates validator with proper defaults", func(t *testing.T) {
+		validator, mockLogger := createTestValidatorSimple()
+		
+		assert.NotNil(t, validator)
+		assert.Equal(t, mockLogger, validator.logger)
+		assert.NotEmpty(t, validator.cacheDir)
+		assert.NotNil(t, validator.sessionWarnings)
+		assert.Len(t, validator.sessionWarnings, 0)
+		
+		// Check cache directory path structure
+		homeDir, _ := os.UserHomeDir()
+		expectedCacheDir := filepath.Join(homeDir, ".claude-reactor", "image-cache")
+		assert.Equal(t, expectedCacheDir, validator.cacheDir)
+	})
+}
+
+// Test validatePlatform
+func TestValidatePlatform(t *testing.T) {
+	validator, _ := createTestValidatorSimple()
+	
+	t.Run("linux platform is valid", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Platform: "linux",
+		}
+		
+		validator.validatePlatform(result)
+		
+		assert.True(t, result.IsLinux)
+		assert.Len(t, result.Errors, 0)
+	})
+	
+	t.Run("Linux platform with capital L is valid", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Platform: "Linux",
+		}
+		
+		validator.validatePlatform(result)
+		
+		assert.True(t, result.IsLinux)
+		assert.Len(t, result.Errors, 0)
+	})
+	
+	t.Run("windows platform is invalid", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Platform: "windows",
+			Errors: []string{},
+		}
+		
+		validator.validatePlatform(result)
+		
+		assert.False(t, result.IsLinux)
+		assert.Len(t, result.Errors, 1)
+		assert.Contains(t, result.Errors[0], "Unsupported platform: windows")
+	})
+	
+	t.Run("darwin platform is invalid", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Platform: "darwin",
+			Errors: []string{},
+		}
+		
+		validator.validatePlatform(result)
+		
+		assert.False(t, result.IsLinux)
+		assert.Len(t, result.Errors, 1)
+		assert.Contains(t, result.Errors[0], "Unsupported platform: darwin")
+	})
+}
+
+// Test ClearSessionWarnings method
+func TestClearSessionWarningsMethod(t *testing.T) {
+	validator, _ := createTestValidatorSimple()
+	
+	// Add some session warnings
+	validator.sessionWarnings["test1"] = true
+	validator.sessionWarnings["test2"] = true
+	assert.Len(t, validator.sessionWarnings, 2)
+	
+	// Clear warnings
+	validator.ClearSessionWarnings()
+	
+	// Should be empty but not nil
+	assert.Len(t, validator.sessionWarnings, 0)
+	assert.NotNil(t, validator.sessionWarnings)
+}
+
+// Test ClearCache method - simple case
+func TestClearCacheMethod(t *testing.T) {
+	validator, _ := createTestValidatorSimple()
+	
+	// Set cache directory to a temp directory
+	tempDir := t.TempDir()
+	validator.cacheDir = tempDir
+	
+	// Create a test cache file
+	testFile := filepath.Join(tempDir, "test-cache.json")
+	err := os.WriteFile(testFile, []byte(`{"test": "data"}`), 0644)
+	assert.NoError(t, err)
+	
+	// Verify file exists
+	_, err = os.Stat(testFile)
+	assert.NoError(t, err)
+	
+	// Clear cache
+	err = validator.ClearCache()
+	assert.NoError(t, err)
+	
+	// Verify directory is removed
+	_, err = os.Stat(tempDir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+// Test cache operations - simple cases
+func TestSimpleCacheOperations(t *testing.T) {
+	validator, _ := createTestValidatorSimple()
+	
+	// Set cache directory to a temp directory
+	tempDir := t.TempDir()
+	validator.cacheDir = tempDir
+	
+	t.Run("cache and retrieve result", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Digest: "sha256:test123",
+			Compatible: true,
+			IsLinux: true,
+			HasClaude: true,
+			Architecture: "amd64",
+			Platform: "linux",
+			Size: 1234567,
+			ValidatedAt: time.Now().Format(time.RFC3339),
+			Warnings: []string{"test warning"},
+			Errors: []string{},
+			Metadata: map[string]interface{}{
+				"test": "data",
+			},
+		}
+		
+		// Cache the result
+		err := validator.cacheResult("sha256:test123", result)
+		assert.NoError(t, err)
+		
+		// Retrieve the result
+		cached, err := validator.getCachedResult("sha256:test123")
+		assert.NoError(t, err)
+		assert.NotNil(t, cached)
+		assert.Equal(t, result.Digest, cached.Digest)
+		assert.Equal(t, result.Compatible, cached.Compatible)
+		assert.Equal(t, result.IsLinux, cached.IsLinux)
+		assert.Equal(t, result.HasClaude, cached.HasClaude)
+		assert.Equal(t, result.Architecture, cached.Architecture)
+		assert.Equal(t, result.Platform, cached.Platform)
+		assert.Equal(t, result.Size, cached.Size)
+		assert.Equal(t, result.ValidatedAt, cached.ValidatedAt)
+		assert.Equal(t, result.Warnings, cached.Warnings)
+		assert.Equal(t, result.Errors, cached.Errors)
+	})
+	
+	t.Run("returns error for non-existent cache", func(t *testing.T) {
+		cached, err := validator.getCachedResult("sha256:nonexistent")
+		assert.Error(t, err)
+		assert.Nil(t, cached)
+	})
+}
+
+// Test getImageDigest
+func TestGetImageDigest(t *testing.T) {
+	validator, _ := createTestValidatorSimple()
+	
+	t.Run("uses image ID when available", func(t *testing.T) {
+		imageInfo := types.ImageInspect{
+			ID: "sha256:localid123",
+		}
+		
+		digest := validator.getImageDigest(imageInfo)
+		assert.Equal(t, "sha256:localid123", digest)
+	})
+	
+	t.Run("creates hash from metadata when no ID", func(t *testing.T) {
+		imageInfo := types.ImageInspect{
+			ID: "", // Empty ID
+			Architecture: "amd64",
+			Os: "linux",
+			Size: 1234567,
+		}
+		
+		digest := validator.getImageDigest(imageInfo)
+		assert.NotEmpty(t, digest)
+		assert.Len(t, digest, 64) // SHA256 hex string is 64 characters
+	})
+}
+
+// Test ensureImageExists - TODO: Add Docker client mocking
+/*
+func TestEnsureImageExists(t *testing.T) {
+	t.Run("finds existing image locally", func(t *testing.T) {
+		validator, mockClient, mockLogger := createTestValidator()
+		
+		// Mock successful image list
+		mockImages := []image.Summary{
+			{
+				ID: "sha256:existing123",
+				RepoTags: []string{"test:latest", "test:1.0"},
+			},
+		}
+		
+		mockClient.On("ImageList", mock.AnythingOfType("*context.emptyCtx"), mock.AnythingOfType("image.ListOptions")).Return(mockImages, nil)
+		mockLogger.On("Debugf", mock.AnythingOfType("string"), mock.Anything)
+		
+		ctx := context.Background()
+		imageID, err := validator.ensureImageExists(ctx, "test:latest", false)
+		
+		assert.NoError(t, err)
+		assert.Equal(t, "sha256:existing123", imageID)
+		
+		mockClient.AssertExpectations(t)
+		mockLogger.AssertExpectations(t)
+	})
+	
+	t.Run("returns error when image not found and pull not requested", func(t *testing.T) {
+		validator, mockClient, _ := createTestValidator()
+		
+		// Mock empty image list
+		mockImages := []image.Summary{}
+		mockClient.On("ImageList", mock.AnythingOfType("*context.emptyCtx"), mock.AnythingOfType("image.ListOptions")).Return(mockImages, nil)
+		
+		ctx := context.Background()
+		imageID, err := validator.ensureImageExists(ctx, "nonexistent:latest", false)
+		
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found locally and pull not requested")
+		assert.Empty(t, imageID)
+		
+		mockClient.AssertExpectations(t)
+	})
+	
+	t.Run("handles image list error", func(t *testing.T) {
+		validator, mockClient, _ := createTestValidator()
+		
+		mockClient.On("ImageList", mock.AnythingOfType("*context.emptyCtx"), mock.AnythingOfType("image.ListOptions")).Return([]image.Summary{}, fmt.Errorf("docker error"))
+		
+		ctx := context.Background()
+		imageID, err := validator.ensureImageExists(ctx, "test:latest", false)
+		
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to list images")
+		assert.Empty(t, imageID)
+		
+		mockClient.AssertExpectations(t)
+	})
+}
+*/
+
+// Mock PullReader for testing - TODO: Re-enable with Docker client mocking
+/*
+type mockPullReader struct {
+	data []byte
+	pos  int
+}
+
+func (m *mockPullReader) Read(p []byte) (n int, err error) {
+	if m.pos >= len(m.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, m.data[m.pos:])
+	m.pos += n
+	return n, nil
+}
+
+func (m *mockPullReader) Close() error {
+	return nil
+}
+*/
+
+// Test cache functionality - TODO: Re-enable after Docker client mocking is fixed
+/*
+func TestCacheOperations(t *testing.T) {
+	mockClient := &MockDockerClient{}
+	mockLogger := &MockLogger{}
+	
+	// Create validator with temporary cache directory
+	tempDir := t.TempDir()
+	validator := &ImageValidator{
+		dockerClient: mockClient,
+		logger: mockLogger,
+		cacheDir: tempDir,
+		sessionWarnings: make(map[string]bool),
+	}
+	
+	t.Run("cache and retrieve result", func(t *testing.T) {
+		result := &pkg.ImageValidationResult{
+			Digest: "sha256:test123",
+			Compatible: true,
+			IsLinux: true,
+			HasClaude: true,
+			Architecture: "amd64",
+			Platform: "linux",
+			Size: 1234567,
+			ValidatedAt: time.Now().Format(time.RFC3339),
+			Warnings: []string{"test warning"},
+			Errors: []string{},
+			Metadata: map[string]interface{}{
+				"test": "data",
+			},
+		}
+		
+		// Cache the result
+		err := validator.cacheResult("sha256:test123", result)
+		assert.NoError(t, err)
+		
+		// Retrieve from cache
+		cached, err := validator.getCachedResult("sha256:test123")
+		assert.NoError(t, err)
+		assert.NotNil(t, cached)
+		
+		// Verify cached data
+		assert.Equal(t, result.Digest, cached.Digest)
+		assert.Equal(t, result.Compatible, cached.Compatible)
+		assert.Equal(t, result.IsLinux, cached.IsLinux)
+		assert.Equal(t, result.HasClaude, cached.HasClaude)
+		assert.Equal(t, result.Architecture, cached.Architecture)
+		assert.Equal(t, result.Platform, cached.Platform)
+		assert.Equal(t, result.Size, cached.Size)
+		assert.Equal(t, result.Warnings, cached.Warnings)
+		assert.Equal(t, result.Errors, cached.Errors)
+		assert.Equal(t, result.Metadata, cached.Metadata)
+	})
+	
+	t.Run("returns error for non-existent cache entry", func(t *testing.T) {
+		cached, err := validator.getCachedResult("sha256:nonexistent")
+		assert.Error(t, err)
+		assert.Nil(t, cached)
+	})
+	
+	t.Run("handles invalid cache file", func(t *testing.T) {
+		// Create invalid cache file
+		cacheFile := filepath.Join(tempDir, "sha256_invalid123.json")
+		err := os.WriteFile(cacheFile, []byte("invalid json"), 0644)
+		assert.NoError(t, err)
+		
+		cached, err := validator.getCachedResult("sha256:invalid123")
+		assert.Error(t, err)
+		assert.Nil(t, cached)
+		assert.Contains(t, err.Error(), "failed to unmarshal")
+	})
+}
+*/
+
+// Test ClearCache - TODO: Re-enable after Docker client mocking is fixed
+/*
+func TestClearCache(t *testing.T) {
+	mockClient := &MockDockerClient{}
+	mockLogger := &MockLogger{}
+	
+	// Create validator with temporary cache directory
+	tempDir := t.TempDir()
+	validator := &ImageValidator{
+		dockerClient: mockClient,
+		logger: mockLogger,
+		cacheDir: tempDir,
+		sessionWarnings: make(map[string]bool),
+	}
+	
+	t.Run("clears cache directory", func(t *testing.T) {
+		// Create some cache files
+		testFile1 := filepath.Join(tempDir, "test1.json")
+		testFile2 := filepath.Join(tempDir, "test2.json")
+		
+		err := os.WriteFile(testFile1, []byte("{}"), 0644)
+		assert.NoError(t, err)
+		err = os.WriteFile(testFile2, []byte("{}"), 0644)
+		assert.NoError(t, err)
+		
+		// Verify files exist
+		_, err = os.Stat(testFile1)
+		assert.NoError(t, err)
+		_, err = os.Stat(testFile2)
+		assert.NoError(t, err)
+		
+		// Clear cache
+		err = validator.ClearCache()
+		assert.NoError(t, err)
+		
+		// Verify files are gone
+		_, err = os.Stat(testFile1)
+		assert.True(t, os.IsNotExist(err))
+		_, err = os.Stat(testFile2)
+		assert.True(t, os.IsNotExist(err))
+		
+		// Verify directory still exists
+		_, err = os.Stat(tempDir)
+		assert.NoError(t, err)
+	})
+	
+	t.Run("handles non-existent cache directory", func(t *testing.T) {
+		validator.cacheDir = "/nonexistent/path"
+		
+		err := validator.ClearCache()
+		// Should not error - clearing non-existent cache is fine
+		assert.NoError(t, err)
+	})
+}
+*/

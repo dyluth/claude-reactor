@@ -335,3 +335,32 @@ func createMockAppContainer(t *testing.T) *pkg.AppContainer {
 		Logger:       &mocks.MockLogger{},
 	}
 }
+
+// Test utility functions that have 0% coverage
+func TestGetDisplayValue(t *testing.T) {
+	t.Run("returns value when not empty", func(t *testing.T) {
+		result := getDisplayValue("actual-value", "default")
+		assert.Equal(t, "actual-value", result)
+	})
+	
+	t.Run("returns default display when value is empty", func(t *testing.T) {
+		result := getDisplayValue("", "default-option")
+		assert.Equal(t, "(using default-option)", result)
+	})
+	
+	t.Run("handles empty default display", func(t *testing.T) {
+		result := getDisplayValue("", "")
+		assert.Equal(t, "(using )", result)
+	})
+}
+
+func TestGetCurrentDir(t *testing.T) {
+	t.Run("returns current directory", func(t *testing.T) {
+		result := getCurrentDir()
+		
+		// Should return a non-empty string and not "unknown" in normal circumstances
+		assert.NotEmpty(t, result)
+		// The exact path will vary, but it should not be "unknown" in normal test runs
+		// We can't assert the exact path since it depends on where tests are run
+	})
+}
