@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -459,6 +460,12 @@ func TestManager_IsAuthenticated(t *testing.T) {
 }
 
 func TestManager_GetAccountConfigPath(t *testing.T) {
+	// Get expected default account for empty string
+	currentUser := os.Getenv("USER")
+	if currentUser == "" {
+		currentUser = "user" // fallback
+	}
+	
 	tests := []struct {
 		name     string
 		account  string
@@ -475,9 +482,9 @@ func TestManager_GetAccountConfigPath(t *testing.T) {
 			expected: ".work-claude.json",
 		},
 		{
-			name:     "empty account defaults to default",
+			name:     "empty account defaults to current user",
 			account:  "",
-			expected: ".default-claude.json",
+			expected: fmt.Sprintf(".%s-claude.json", currentUser),
 		},
 	}
 
@@ -580,6 +587,12 @@ func TestManager_SaveAPIKey(t *testing.T) {
 }
 
 func TestManager_GetAPIKeyFile(t *testing.T) {
+	// Get expected default account for empty string
+	currentUser := os.Getenv("USER")
+	if currentUser == "" {
+		currentUser = "user" // fallback
+	}
+	
 	tests := []struct {
 		name     string
 		account  string
@@ -596,9 +609,9 @@ func TestManager_GetAPIKeyFile(t *testing.T) {
 			expected: ".claude-reactor-work-env",
 		},
 		{
-			name:     "empty account defaults to default",
+			name:     "empty account defaults to current user",
 			account:  "",
-			expected: ".claude-reactor-default-env",
+			expected: fmt.Sprintf(".claude-reactor-%s-env", currentUser),
 		},
 	}
 
@@ -760,6 +773,12 @@ func TestEnsureClaudeReactorDir(t *testing.T) {
 }
 
 func TestNormalizeAccount(t *testing.T) {
+	// Get expected default account for empty string
+	currentUser := os.Getenv("USER")
+	if currentUser == "" {
+		currentUser = "user" // fallback
+	}
+	
 	tests := []struct {
 		name     string
 		account  string
@@ -773,12 +792,12 @@ func TestNormalizeAccount(t *testing.T) {
 		{
 			name:     "empty account name",
 			account:  "",
-			expected: "default",
+			expected: currentUser,
 		},
 		{
 			name:     "whitespace account name",
 			account:  "   ",
-			expected: "default",
+			expected: currentUser,
 		},
 		{
 			name:     "account name with spaces",
@@ -794,7 +813,8 @@ func TestNormalizeAccount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeAccount(tt.account)
+			mgr := &manager{logger: &mocks.MockLogger{}}
+			result := mgr.normalizeAccount(tt.account)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

@@ -213,6 +213,16 @@ func (m *MockAuthManager) CopyMainConfigToAccount(account string) error {
 	return args.Error(0)
 }
 
+func (m *MockAuthManager) GetDefaultAccount() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *MockAuthManager) GetProjectSessionDir(account, projectPath string) string {
+	args := m.Called(account, projectPath)
+	return args.String(0)
+}
+
 // MockMountManager is a mock implementation of MountManager
 type MockMountManager struct {
 	mock.Mock
