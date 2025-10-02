@@ -1,10 +1,10 @@
-# Feature: [Feature Name]
+# AI Prompt: [Feature Name]
 
-## 1. Description
-<!-- AI: Provide a concise, one-paragraph summary of this feature's purpose and the value it delivers to the end-user. -->
+## 1. Feature Description
+<!-- AI: Provide a concise, one-paragraph summary of this feature's purpose and the value it delivers to claude-reactor users. Focus on the developer experience and workflow improvements. -->
 
-## Goal statement
-<!-- AI: Clearly state the primary goal of this feature in a single sentence. What is the desired outcome? e.g., "To allow users to export their data in CSV format." -->
+## 2. Goal Statement
+<!-- AI: Clearly state the primary goal of this feature in a single sentence. What specific developer workflow problem does this solve? e.g., "Enable developers to hot-reload code changes without container restart for faster iteration cycles." -->
 
 ## Project Analysis & current state
 
