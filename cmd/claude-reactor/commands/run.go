@@ -91,6 +91,7 @@ Related Commands:
 	runCmd.Flags().BoolP("host-docker", "", false, "Enable host Docker socket access (⚠️  SECURITY: grants host-level Docker privileges)")
 	runCmd.Flags().StringP("host-docker-timeout", "", "5m", "Timeout for Docker operations (use '0' to disable timeout)")
 	runCmd.Flags().StringP("ssh-agent", "", "", "Enable SSH agent forwarding (auto-detect or specify socket path)")
+	runCmd.Flags().Lookup("ssh-agent").NoOptDefVal = "auto"
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
 	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
