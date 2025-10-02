@@ -579,11 +579,12 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 
 		// Conversation control (Phase 0.3)
+		// TEMPORARY: Disable --continue until additional working directories issue is resolved
 		if noContinue {
 			app.Logger.Info("💬 Conversation continuation disabled")
 		} else {
-			command = append(command, "--continue")
-			app.Logger.Debug("💬 Conversation continuation enabled (default)")
+			// TODO: Fix additional working directories issue before re-enabling --continue
+			app.Logger.Debug("💬 Conversation continuation temporarily disabled due to path issue")
 		}
 		if app.Debug {
 			command = append(command, "-d", "--verbose")
@@ -705,12 +706,12 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 			}
 		}
 		
-		// Set SSH_AUTH_SOCK environment variable in container
+		// Skip SSH_AUTH_SOCK setup - using direct SSH key mounting instead
+		// This is more reliable than agent forwarding for Git operations on Docker Desktop
 		if containerConfig.Environment == nil {
 			containerConfig.Environment = make(map[string]string)
 		}
-		containerConfig.Environment["SSH_AUTH_SOCK"] = "/ssh-agent.sock"
-		app.Logger.Info("🔑 SSH agent environment configured")
+		app.Logger.Info("🔑 SSH keys configured for Git operations")
 	}
 
 	// Add user-specified mounts

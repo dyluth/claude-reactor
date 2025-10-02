@@ -2,7 +2,7 @@ module claude-reactor
 
 go 1.23.0
 
-toolchain go1.23.12
+toolchain go1.24.5
 
 require (
 	github.com/docker/docker v28.3.3+incompatible

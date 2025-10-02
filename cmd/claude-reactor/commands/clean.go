@@ -80,7 +80,8 @@ func cleanContainers(cmd *cobra.Command, app *pkg.AppContainer) error {
 	}
 	if all {
 		cleanupLevel = "all"
-		global = true // --all implies --global
+		// Note: --all only affects cleanup level, not scope
+		// Use --global explicitly to clean all projects/accounts
 	}
 
 	// Show what will be cleaned and ask for confirmation if not forced

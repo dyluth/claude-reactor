@@ -266,28 +266,69 @@ func (m *manager) runClaudeUpgrade(ctx context.Context, containerID string) erro
 
 // ensureContainerDirectories creates required directories in the container
 func (m *manager) ensureContainerDirectories(ctx context.Context, containerID string) error {
-	// Create .claude-reactor directory to prevent "Path not found" errors
-	// This directory is needed by Claude CLI for authentication and config operations
-	execConfig := container.ExecOptions{
-		Cmd:    []string{"mkdir", "-p", "/home/claude/.claude-reactor"},
-		Detach: false,
+	// Create directories to prevent Claude CLI "Path not found" errors
+	// These directories are needed by Claude CLI for additional working directories
+	directories := []string{
+		"/home/claude/.claude-reactor",
+		"/Users/cam/.claude-reactor", 
+		"/Users/cam",
 	}
 	
-	// Create exec instance
-	execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create directory creation exec: %w", err)
+	for _, dir := range directories {
+		execConfig := container.ExecOptions{
+			Cmd:    []string{"sudo", "mkdir", "-p", dir},
+			Detach: false,
+		}
+		
+		// Create exec instance
+		execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+		if err != nil {
+			m.logger.Warnf("Failed to create directory creation exec for %s: %v", dir, err)
+			continue
+		}
+		
+		// Start exec and wait for completion
+		err = m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{
+			Detach: false,
+		})
+		if err != nil {
+			m.logger.Warnf("Failed to create directory %s: %v", dir, err)
+			continue
+		}
+		
+		m.logger.Debugf("✅ Created directory: %s", dir)
 	}
 	
-	// Start exec and wait for completion
-	err = m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{
-		Detach: false,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create directories: %w", err)
+	// Create symlinks to map problematic paths to correct locations
+	symlinks := map[string]string{
+		"/Users/cam/.claude-reactor": "/home/claude/.claude",
+		"/Users/cam":                 "/home/claude",
 	}
 	
-	m.logger.Debugf("✅ Created required directories in container")
+	for source, target := range symlinks {
+		execConfig := container.ExecOptions{
+			Cmd:    []string{"sudo", "ln", "-sf", target, source},
+			Detach: false,
+		}
+		
+		execResp, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+		if err != nil {
+			m.logger.Warnf("Failed to create symlink exec for %s: %v", source, err)
+			continue
+		}
+		
+		err = m.client.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{
+			Detach: false,
+		})
+		if err != nil {
+			m.logger.Warnf("Failed to create symlink %s -> %s: %v", source, target, err)
+			continue
+		}
+		
+		m.logger.Debugf("✅ Created symlink: %s -> %s", source, target)
+	}
+	
+	m.logger.Debugf("✅ Container directory setup completed")
 	return nil
 }
 

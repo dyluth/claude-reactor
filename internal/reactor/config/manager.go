@@ -302,14 +302,11 @@ func (m *manager) PrepareSSHMounts(sshAgent bool, socketPath string) ([]pkg.Moun
 
 	var mounts []pkg.Mount
 
-	// Mount SSH agent socket
+	// Skip SSH agent socket mounting for now due to Docker Desktop on macOS issues
+	// For Git operations, SSH key mounting is sufficient and more reliable
 	if socketPath != "" {
-		mounts = append(mounts, pkg.Mount{
-			Source:   socketPath,
-			Target:   "/ssh-agent.sock",
-			Type:     "bind",
-			ReadOnly: true,
-		})
+		m.logger.Debugf("SSH agent socket detected but skipping mount due to Docker Desktop limitations: %s", socketPath)
+		m.logger.Info("💡 Using SSH key mounting instead of agent forwarding for Git operations")
 	}
 
 	// Mount SSH config files if they exist
@@ -320,15 +317,21 @@ func (m *manager) PrepareSSHMounts(sshAgent bool, socketPath string) ([]pkg.Moun
 
 	sshDir := filepath.Join(homeDir, ".ssh")
 	
-	// Mount ~/.ssh/config if it exists
+	// Create Linux-compatible SSH config if host config exists
 	sshConfig := filepath.Join(sshDir, "config")
 	if _, err := os.Stat(sshConfig); err == nil {
-		mounts = append(mounts, pkg.Mount{
-			Source:   sshConfig,
-			Target:   "/home/claude/.ssh/config",
-			Type:     "bind",
-			ReadOnly: true,
-		})
+		// Create a filtered config file for the container
+		filteredConfigPath, err := m.createLinuxCompatibleSSHConfig(sshConfig)
+		if err == nil {
+			mounts = append(mounts, pkg.Mount{
+				Source:   filteredConfigPath,
+				Target:   "/home/claude/.ssh/config",
+				Type:     "bind",
+				ReadOnly: true,
+			})
+		} else {
+			m.logger.Warnf("Failed to create Linux-compatible SSH config: %v", err)
+		}
 	}
 
 	// Mount ~/.ssh/known_hosts if it exists
@@ -353,5 +356,60 @@ func (m *manager) PrepareSSHMounts(sshAgent bool, socketPath string) ([]pkg.Moun
 		})
 	}
 
+	// Mount SSH private keys for fallback when agent forwarding fails
+	// This is more reliable than socket mounting on Docker Desktop
+	sshKeyPaths := []string{"id_rsa", "id_ed25519", "id_ecdsa"}
+	for _, keyName := range sshKeyPaths {
+		keyPath := filepath.Join(sshDir, keyName)
+		if _, err := os.Stat(keyPath); err == nil {
+			m.logger.Debugf("Adding SSH key mount: %s", keyPath)
+			mounts = append(mounts, pkg.Mount{
+				Source:   keyPath,
+				Target:   fmt.Sprintf("/home/claude/.ssh/%s", keyName),
+				Type:     "bind",
+				ReadOnly: true,
+			})
+		}
+	}
+
 	return mounts, nil
+}
+
+// createLinuxCompatibleSSHConfig creates a temporary SSH config file compatible with Linux
+// by filtering out macOS-specific directives like UseKeychain
+func (m *manager) createLinuxCompatibleSSHConfig(sourcePath string) (string, error) {
+	// Read the original config
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SSH config: %w", err)
+	}
+
+	// Filter out macOS-specific lines
+	lines := strings.Split(string(content), "\n")
+	var filteredLines []string
+	
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		
+		// Skip macOS-specific directives
+		if strings.HasPrefix(strings.ToLower(trimmedLine), "usekeychain") {
+			m.logger.Debugf("Filtering out macOS-specific directive: %s", trimmedLine)
+			continue
+		}
+		
+		// Keep all other lines
+		filteredLines = append(filteredLines, line)
+	}
+
+	// Create temporary file for the filtered config
+	tmpDir := os.TempDir()
+	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("claude-reactor-ssh-config-%d", os.Getpid()))
+	
+	err = os.WriteFile(tmpFile, []byte(strings.Join(filteredLines, "\n")), 0600)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary SSH config: %w", err)
+	}
+
+	m.logger.Debugf("Created Linux-compatible SSH config: %s", tmpFile)
+	return tmpFile, nil
 }
