@@ -30,6 +30,7 @@ coverage.out
 # IDE files
 .vscode/
 .idea/
+.devcontainer/
 *.swp
 *.swo
 
