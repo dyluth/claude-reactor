@@ -129,7 +129,15 @@ func (mm *MountManager) ValidateMounts(mounts []pkg.Mount) error {
 			return fmt.Errorf("mount source does not exist: %s", mount.Source)
 		}
 		
-		// Check if source is readable
+		// Check if source is readable (skip for sockets as they can't be opened)
+		if info, err := os.Stat(mount.Source); err == nil {
+			// Skip accessibility check for sockets as they can't be opened with os.Open()
+			if info.Mode()&os.ModeSocket != 0 {
+				// This is a socket file, skip the open test
+				continue
+			}
+		}
+		
 		file, err := os.Open(mount.Source)
 		if err != nil {
 			return fmt.Errorf("mount source is not accessible: %s (%v)", mount.Source, err)

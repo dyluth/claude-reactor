@@ -193,6 +193,14 @@ func (m *manager) StartContainer(ctx context.Context, config *pkg.ContainerConfi
 	m.logger.Debugf("Creating container with image: %s", config.Image)
 	resp, err := m.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, config.Name)
 	if err != nil {
+		// Check for SSH agent socket mounting issues (common with Docker Desktop on macOS)
+		if strings.Contains(err.Error(), "socket_mnt") && strings.Contains(err.Error(), "bind source path does not exist") {
+			return "", fmt.Errorf("failed to create container: SSH agent socket mounting failed\n"+
+				"💡 This is a known issue with Docker Desktop on macOS\n"+
+				"💡 Try without SSH agent: remove --ssh-agent flag\n"+
+				"💡 Or use a different SSH agent socket path\n"+
+				"Original error: %w", err)
+		}
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 	
