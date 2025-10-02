@@ -118,23 +118,12 @@ func TestPrepareSSHMounts(t *testing.T) {
 		mounts, err := mgr.PrepareSSHMounts(true, socketPath)
 		assert.NoError(t, err)
 		
-		// Should have at least the SSH agent socket mount
-		assert.NotEmpty(t, mounts)
-		
-		// Find SSH agent socket mount
-		var agentMount *pkg.Mount
-		for i, mount := range mounts {
-			if mount.Source == socketPath && mount.Target == "/ssh-agent.sock" {
-				agentMount = &mounts[i]
-				break
-			}
+		// SSH agent socket mounting is intentionally skipped due to Docker Desktop limitations
+		// So we should NOT find an SSH agent socket mount
+		for _, mount := range mounts {
+			assert.NotEqual(t, socketPath, mount.Source, "SSH agent socket should not be mounted due to Docker Desktop limitations")
+			assert.NotEqual(t, "/ssh-agent.sock", mount.Target, "SSH agent socket mount should not be present")
 		}
-		
-		require.NotNil(t, agentMount, "SSH agent socket mount should be present")
-		assert.Equal(t, socketPath, agentMount.Source)
-		assert.Equal(t, "/ssh-agent.sock", agentMount.Target)
-		assert.Equal(t, "bind", agentMount.Type)
-		assert.True(t, agentMount.ReadOnly)
 	})
 
 	t.Run("SSH agent enabled with SSH config files", func(t *testing.T) {
@@ -169,24 +158,48 @@ func TestPrepareSSHMounts(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotEmpty(t, mounts)
 
-		// Should have SSH agent socket, config, known_hosts, and gitconfig mounts
-		expectedMounts := map[string]string{
-			socketPath:       "/ssh-agent.sock",
-			configFile:      "/home/claude/.ssh/config",
-			knownHostsFile:  "/home/claude/.ssh/known_hosts",
-			gitConfigFile:   "/home/claude/.gitconfig",
+		// SSH agent socket should NOT be mounted (due to Docker Desktop limitations)
+		for _, mount := range mounts {
+			assert.NotEqual(t, socketPath, mount.Source, "SSH agent socket should not be mounted")
+			assert.NotEqual(t, "/ssh-agent.sock", mount.Target, "SSH agent socket mount should not be present")
+		}
+
+		// Should have config, known_hosts, and gitconfig mounts
+		// Note: SSH config will be a filtered temporary file, not the original
+		expectedTargets := map[string]bool{
+			"/home/claude/.ssh/config":      false,
+			"/home/claude/.ssh/known_hosts": false,
+			"/home/claude/.gitconfig":       false,
 		}
 
 		actualMounts := make(map[string]string)
 		for _, mount := range mounts {
 			actualMounts[mount.Source] = mount.Target
+			if _, exists := expectedTargets[mount.Target]; exists {
+				expectedTargets[mount.Target] = true
+			}
 		}
 
-		for source, expectedTarget := range expectedMounts {
-			actualTarget, exists := actualMounts[source]
-			assert.True(t, exists, "Mount for %s should exist", source)
-			assert.Equal(t, expectedTarget, actualTarget, "Target for %s should be %s", source, expectedTarget)
+		// Verify that known_hosts and gitconfig are mounted with original sources
+		assert.True(t, expectedTargets["/home/claude/.ssh/known_hosts"], "known_hosts should be mounted")
+		assert.True(t, expectedTargets["/home/claude/.gitconfig"], "gitconfig should be mounted")
+		assert.True(t, expectedTargets["/home/claude/.ssh/config"], "SSH config should be mounted")
+
+		// Verify known_hosts and gitconfig use original files as source
+		assert.Equal(t, "/home/claude/.ssh/known_hosts", actualMounts[knownHostsFile])
+		assert.Equal(t, "/home/claude/.gitconfig", actualMounts[gitConfigFile])
+
+		// SSH config should use a temporary filtered file (not the original)
+		var configMountSource string
+		for source, target := range actualMounts {
+			if target == "/home/claude/.ssh/config" {
+				configMountSource = source
+				break
+			}
 		}
+		assert.NotEmpty(t, configMountSource, "SSH config mount should exist")
+		assert.NotEqual(t, configFile, configMountSource, "SSH config should use filtered temporary file, not original")
+		assert.Contains(t, configMountSource, "claude-reactor-ssh-config", "SSH config source should be a claude-reactor temporary file")
 
 		// All mounts should be read-only
 		for _, mount := range mounts {
