@@ -472,6 +472,23 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		HostDockerTimeout: hostDockerTimeout,
 		SSHAgent:         sshAgentEnabled,
 		SSHAgentSocket:   sshAgentSocket,
+		Environment:      make(map[string]string),
+	}
+
+	// Configure timezone to match host
+	// This ensures timestamps in container match the user's local time
+	if tz := os.Getenv("TZ"); tz != "" {
+		containerConfig.Environment["TZ"] = tz
+		app.Logger.Debugf("🕐 Setting container timezone: %s", tz)
+	} else {
+		// Fallback: try to read /etc/timezone or /etc/localtime
+		if data, err := os.ReadFile("/etc/timezone"); err == nil {
+			tz := strings.TrimSpace(string(data))
+			if tz != "" {
+				containerConfig.Environment["TZ"] = tz
+				app.Logger.Debugf("🕐 Setting container timezone from /etc/timezone: %s", tz)
+			}
+		}
 	}
 
 	// Add mounts (skip if requested for testing)
@@ -627,23 +644,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	}
 	app.Logger.Infof("📁 Project mount: %s -> %s", projectDir, targetPath)
 
-	// Claude authentication mount - use account-specific Claude config file
-	// This ensures persistent authentication for each account across container restarts
-	claudeConfigPath := app.AuthMgr.GetAccountConfigPath(account)
-	
-	// Mount account-specific Claude config file for persistent authentication
-	if _, err := os.Stat(claudeConfigPath); err == nil {
-		err = app.MountMgr.AddMountToConfig(containerConfig, claudeConfigPath, "/home/claude/.claude.json")
-		if err != nil {
-			app.Logger.Warnf("Failed to add Claude config mount: %v", err)
-		} else {
-			app.Logger.Infof("🔑 Claude auth mount: %s -> /home/claude/.claude.json", claudeConfigPath)
-		}
-	} else {
-		app.Logger.Warnf("Claude config file not found for account %s: %s", account, claudeConfigPath)
-	}
-
-	// Claude session directory mount - use project-specific session directory  
+	// Claude session directory mount - use project-specific session directory
 	// This contains conversation history, shell snapshots, todos, etc.
 	// Format: ~/.claude-reactor/{account}/{project-name}-{project-hash}/
 	claudeSessionDir := app.AuthMgr.GetProjectSessionDir(account, projectDir)
@@ -657,6 +658,38 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 			app.Logger.Warnf("Failed to add Claude session mount: %v", err)
 		} else {
 			app.Logger.Infof("📁 Claude session mount: %s -> /home/claude/.claude", claudeSessionDir)
+		}
+	}
+
+	// Create project-specific .claude.json file if it doesn't exist
+	// This ensures each project has isolated Claude CLI configuration
+	projectClaudeConfig := filepath.Join(claudeSessionDir, ".claude.json")
+	if _, err := os.Stat(projectClaudeConfig); os.IsNotExist(err) {
+		// Copy from account config as template
+		accountConfigPath := app.AuthMgr.GetAccountConfigPath(account)
+		if err := app.AuthMgr.CopyMainConfigToAccount(account); err != nil {
+			app.Logger.Warnf("Failed to ensure account config exists: %v", err)
+		}
+
+		if data, readErr := os.ReadFile(accountConfigPath); readErr == nil {
+			if writeErr := os.WriteFile(projectClaudeConfig, data, 0644); writeErr != nil {
+				app.Logger.Warnf("Failed to create project-specific .claude.json: %v", writeErr)
+			} else {
+				app.Logger.Infof("📄 Created project-specific config: %s", projectClaudeConfig)
+			}
+		} else {
+			app.Logger.Warnf("Failed to read account config template: %v", readErr)
+		}
+	}
+
+	// Mount project-specific .claude.json instead of account-wide config
+	// This prevents config file conflicts between different projects
+	if _, err := os.Stat(projectClaudeConfig); err == nil {
+		err = app.MountMgr.AddMountToConfig(containerConfig, projectClaudeConfig, "/home/claude/.claude.json")
+		if err != nil {
+			app.Logger.Warnf("Failed to add project Claude config mount: %v", err)
+		} else {
+			app.Logger.Infof("🔑 Claude config mount: %s -> /home/claude/.claude.json", projectClaudeConfig)
 		}
 	}
 	

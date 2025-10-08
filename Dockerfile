@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     # Core system tools # bust-cache
     curl git ca-certificates wget unzip gnupg2 socat sudo \
     # Essential CLI tools for Claude
-    ripgrep jq fzf nano vim less procps htop \
+    ripgrep jq fzf nano vim less procps htop grep gawk \
     # Build tools and compilers
     build-essential python3 python3-pip \
     # Shell and process tools
@@ -47,11 +47,11 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /
 # --- Install Node.js and Claude CLI ---
 # Set environment variables for nvm
 ENV NVM_DIR=/usr/local/nvm
-ENV NODE_VERSION=20.18.0
+ENV NODE_VERSION=22.20.0
 
 # Create NVM directory and install nvm
 RUN mkdir -p $NVM_DIR && \
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
 
 # Activate nvm and install Node.js and essential Node.js tools as root
 # We do this in a single RUN command to ensure it all happens in the same shell context.
@@ -140,7 +140,7 @@ FROM base AS go
 USER root
 
 # Install Go
-ENV GO_VERSION=1.21.6
+ENV GO_VERSION=1.24.7
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; \
     elif [ "$ARCH" = "amd64" ]; then GO_ARCH="amd64"; \
@@ -161,7 +161,7 @@ RUN export GOCACHE=/tmp/go-cache && \
     elif [ "$ARCH" = "amd64" ]; then LINT_ARCH="amd64"; \
     else LINT_ARCH="amd64"; fi && \
     curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | \
-    sh -s -- -b /usr/local/bin v1.55.2 && \
+    sh -s -- -b /usr/local/bin v2.5.0 && \
     # Copy Go tools and aggressive cleanup
     cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
     rm -rf /root/go /tmp/go-* /root/.cache /tmp/golangci-lint* && \
@@ -179,7 +179,7 @@ FROM go AS full
 USER root
 
 # Install Rust (updated version for compatibility)
-ENV RUST_VERSION=1.82.0
+ENV RUST_VERSION=1.90.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
 ENV PATH=/root/.cargo/bin:$PATH
 
@@ -197,7 +197,7 @@ RUN export CARGO_TARGET_DIR=/tmp/cargo-target && \
     /root/.cargo/bin/cargo --version && \
     echo "Rust toolchain installed successfully"
 
-# Install Java (OpenJDK 17)
+# Install Java (OpenJDK 17 - latest LTS available in Debian Bullseye)
 RUN apt-get update && apt-get install -y \
     openjdk-17-jdk \
     maven \
@@ -275,7 +275,7 @@ RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - &
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 # Install Terraform
-ENV TERRAFORM_VERSION=1.6.6
+ENV TERRAFORM_VERSION=1.13.3
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then TF_ARCH="arm64"; \
     elif [ "$ARCH" = "amd64" ]; then TF_ARCH="amd64"; \
@@ -323,7 +323,7 @@ RUN echo "🔧 Installing Kubernetes tools (best-effort approach)..." && \
     \
     # Install k9s (Kubernetes CLI UI) - resilient installation
     echo "📱 Installing k9s..." && \
-    (curl -fsSL "https://github.com/derailed/k9s/releases/download/v0.32.5/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin k9s 2>/dev/null && echo "✅ k9s installed successfully" || echo "⚠️  k9s installation failed, continuing...") && \
+    (curl -fsSL "https://github.com/derailed/k9s/releases/download/v0.50.12/k9s_Linux_${K9S_ARCH}.tar.gz" | tar -xz -C /usr/local/bin k9s 2>/dev/null && echo "✅ k9s installed successfully" || echo "⚠️  k9s installation failed, continuing...") && \
     \
     # Install kubectx and kubens - resilient installation with multiple URL patterns
     echo "🔄 Installing kubectx/kubens..." && \
