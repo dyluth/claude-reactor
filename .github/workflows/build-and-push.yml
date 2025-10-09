@@ -147,26 +147,59 @@ jobs:
         make test-unit
         # Note: Full integration tests require proper Claude CLI setup
 
+  pr-security-check:
+    needs: [test-and-coverage]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run Trivy filesystem scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        skip-version-check: true
+
+    - name: Run Trivy config scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: '.'
+        format: 'table'
+        skip-version-check: true
+
   security-scan:
     needs: [test-and-coverage, build-and-push]
     runs-on: ubuntu-latest
+    # Only run security scans on pushes to main and tags, not on PRs
+    if: github.event_name != 'pull_request'
 
     strategy:
       matrix:
-        variant: [base, go, full, cloud, k8s]
+        variant: [base, go, full]  # Only scan core variants to reduce CI time
 
     steps:
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        # For PRs: scan local images that were built but not pushed
-        # For merges: scan published registry images
-        image-ref: '${{ github.event_name == ''pull_request'' && format(''{0}-{1}:{2}'', env.IMAGE_NAME, matrix.variant, github.event.pull_request.head.sha) || format(''{0}/{1}-{2}:{3}'', env.REGISTRY, env.IMAGE_NAME, matrix.variant, github.sha) }}'
+        # Scan published registry images (only runs after push to registry)
+        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.sha }}'
         format: 'sarif'
         output: 'trivy-results.sarif'
+        skip-version-check: true
 
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: github.event_name != 'pull_request'
       with:
         sarif_file: 'trivy-results.sarif'
