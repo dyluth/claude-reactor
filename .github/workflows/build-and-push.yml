@@ -66,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [base, go, full]
+        variant: [base, go, full, cloud, k8s]
 
     steps:
     - name: Checkout repository
@@ -150,21 +150,21 @@ jobs:
   security-scan:
     needs: [test-and-coverage, build-and-push]
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    
+
     strategy:
       matrix:
-        variant: [base, go, full]
-    
+        variant: [base, go, full, cloud, k8s]
+
     steps:
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:latest'
+        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.event.pull_request.head.sha || github.sha }}'
         format: 'sarif'
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
+      if: github.event_name != 'pull_request'
       with:
         sarif_file: 'trivy-results.sarif'
