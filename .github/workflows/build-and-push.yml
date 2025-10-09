@@ -159,7 +159,9 @@ jobs:
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.event.pull_request.head.sha || github.sha }}'
+        # For PRs: scan local images that were built but not pushed
+        # For merges: scan published registry images
+        image-ref: '${{ github.event_name == ''pull_request'' && format(''{0}-{1}:{2}'', env.IMAGE_NAME, matrix.variant, github.event.pull_request.head.sha) || format(''{0}/{1}-{2}:{3}'', env.REGISTRY, env.IMAGE_NAME, matrix.variant, github.sha) }}'
         format: 'sarif'
         output: 'trivy-results.sarif'
 
