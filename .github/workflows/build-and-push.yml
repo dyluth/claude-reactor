@@ -147,7 +147,7 @@ jobs:
         make test-unit
         # Note: Full integration tests require proper Claude CLI setup
 
-  pr-security-check:
+  security-scan-pr:
     needs: [test-and-coverage]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -162,7 +162,6 @@ jobs:
         scan-type: 'fs'
         scan-ref: '.'
         format: 'table'
-        skip-version-check: true
 
     - name: Run Trivy config scan
       uses: aquasecurity/trivy-action@master
@@ -170,9 +169,8 @@ jobs:
         scan-type: 'config'
         scan-ref: '.'
         format: 'table'
-        skip-version-check: true
 
-  security-scan:
+  security-scan-merged:
     needs: [test-and-coverage, build-and-push]
     runs-on: ubuntu-latest
     # Only run security scans on pushes to main and tags, not on PRs
