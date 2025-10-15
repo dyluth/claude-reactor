@@ -115,8 +115,9 @@ jobs:
         build-args: |
           BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           GIT_COMMIT=${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: type=gha,scope=${{ matrix.variant }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+        network: host
 
     - name: Test image
       if: github.event_name != 'pull_request'

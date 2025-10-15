@@ -296,11 +296,22 @@ FROM full AS k8s
 # Switch to root for installations
 USER root
 
-# Install Helm using official installation script (more reliable than GPG key method)
-RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
-    chmod 700 get_helm.sh && \
-    ./get_helm.sh && \
-    rm get_helm.sh
+# Install Helm using official installation script (resilient approach)
+RUN echo "🔧 Installing Helm (best-effort approach)..." && \
+    (curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
+     chmod 700 get_helm.sh && \
+     ./get_helm.sh && \
+     rm get_helm.sh && \
+     echo "✅ Helm installed successfully") || \
+    (echo "⚠️  Helm installation failed, trying fallback method..." && \
+     ARCH=$(dpkg --print-architecture) && \
+     if [ "$ARCH" = "arm64" ]; then HELM_ARCH="arm64"; elif [ "$ARCH" = "amd64" ]; then HELM_ARCH="amd64"; else echo "Unsupported arch"; exit 0; fi && \
+     curl -fsSL "https://get.helm.sh/helm-v3.13.0-linux-${HELM_ARCH}.tar.gz" | tar -xzC /tmp && \
+     mv "/tmp/linux-${HELM_ARCH}/helm" /usr/local/bin/helm && \
+     chmod +x /usr/local/bin/helm && \
+     rm -rf "/tmp/linux-${HELM_ARCH}" && \
+     echo "✅ Helm installed via fallback method") || \
+    echo "⚠️  Helm installation failed completely, continuing without Helm"
 
 # Install k8s tools with resilient best-effort approach
 # Note: External URLs may fail in CI environments - build continues regardless
