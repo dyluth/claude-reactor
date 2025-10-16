@@ -56,15 +56,22 @@ help: ## Display this help message
 	@echo "    make run              # Start container (auto-detects variant)"
 	@echo "    make config           # Check current configuration"
 	@echo "    make run-go           # Force Go variant"
+	@echo "    go run ./cmd/...      # Run locally without building"
 	@echo ""
 	@echo "  $(BLUE)Testing:$(NC)"
 	@echo "    make test             # Run complete test suite"
 	@echo "    make demo             # Interactive feature demo"
 	@echo "    make test-unit        # Quick unit tests only"
+	@echo "    make coverage-report  # Unit tests with coverage analysis"
 	@echo ""
 	@echo "  $(BLUE)Building:$(NC)"
-	@echo "    make build-all        # Build core variants"
-	@echo "    make build-extended   # Build all variants"
+	@echo "    make build            # Build dist/ binaries for all platforms"
+	@echo "    make build-local      # Build dist/ binary for current platform only"
+	@echo "    make build-all        # Build Docker container variants"
+	@echo ""
+	@echo "  $(BLUE)Installation:$(NC)"
+	@echo "    make install          # Install to system PATH"
+	@echo "    make uninstall        # Remove from system PATH"
 	@echo ""
 	@echo "  $(BLUE)Maintenance:$(NC)"
 	@echo "    make clean-all        # Complete cleanup"
@@ -154,11 +161,50 @@ build-extended: build-all build-cloud build-k8s ## Build all container variants 
 
 ##@ Testing
 
+.PHONY: test-go-unit
+test-go-unit: ## Run Go unit tests
+	@echo "$(BLUE)Running Go unit tests...$(NC)"
+	@go test -count=1 -timeout=30s ./internal/... ./pkg/... ./cmd/... || (echo "$(RED)✗ Go unit tests failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ Go unit tests completed$(NC)"
+
+.PHONY: test-go-unit-coverage
+test-go-unit-coverage: ## Run Go unit tests with coverage reporting
+	@echo "$(BLUE)Running Go unit tests with coverage...$(NC)"
+	@mkdir -p coverage
+	@go test -count=1 -timeout=30s -coverprofile=coverage/coverage.out -covermode=atomic ./internal/... ./pkg/... ./cmd/... || (echo "$(RED)✗ Go unit tests failed$(NC)" && exit 1)
+	@go tool cover -html=coverage/coverage.out -o coverage/coverage.html
+	@go tool cover -func=coverage/coverage.out | tail -1 | awk '{print "$(BLUE)Total Coverage: $(GREEN)" $$3 "$(NC)"}'
+	@echo "$(GREEN)✓ Go unit tests with coverage completed$(NC)"
+	@echo "$(BLUE)Coverage report generated:$(NC)"
+	@echo "  HTML: coverage/coverage.html"
+	@echo "  Data: coverage/coverage.out"
+
+.PHONY: coverage-report
+coverage-report: test-go-unit-coverage ## Generate and show detailed coverage report
+	@echo "$(BLUE)Detailed Coverage Report:$(NC)"
+	@go tool cover -func=coverage/coverage.out
+
+.PHONY: test-go-integration
+test-go-integration: ## Run Go integration tests (requires Docker)
+	@echo "$(BLUE)Running Go integration tests...$(NC)"
+	@go test -v -tags=integration ./internal/... ./pkg/... ./cmd/...
+	@echo "$(GREEN)✓ Go integration tests completed$(NC)"
+
+.PHONY: test-go-all
+test-go-all: test-go-unit test-go-integration ## Run all Go tests
+	@echo "$(GREEN)✓ All Go tests completed$(NC)"
+
 .PHONY: test-unit
-test-unit: ## Run unit tests (fast)
-	@echo "$(BLUE)Running unit tests...$(NC)"
+test-unit: test-go-unit ## Run unit tests (fast) - includes both bash and Go tests
+	@echo "$(BLUE)Running bash unit tests...$(NC)"
 	@./tests/test-runner.sh --unit
 	@echo "$(GREEN)✓ Unit tests completed$(NC)"
+
+.PHONY: test-phase0
+test-phase0: build ## Run Phase 0 feature validation tests
+	@echo "$(BLUE)Running Phase 0 feature validation tests...$(NC)"
+	@./tests/phase0/test-phase0-quick.sh
+	@echo "$(GREEN)✓ Phase 0 tests completed$(NC)"
 
 .PHONY: test-integration
 test-integration: ## Run integration tests (requires Docker)
@@ -171,7 +217,7 @@ test-integration-quick: ## Run integration tests without Docker builds
 	@./tests/test-runner.sh --integration --quick && echo "$(GREEN)✓ Quick integration tests completed$(NC)"
 
 .PHONY: test
-test: test-unit test-integration-quick ## Run complete test suite (unit + quick integration)
+test: build test-unit test-integration-quick ## Run complete test suite (unit + quick integration)
 	@echo "$(GREEN)✓ Complete test suite passed$(NC)"
 
 .PHONY: test-full
@@ -193,14 +239,101 @@ demo-quick: ## Run quick demo without Docker builds
 	@echo "$(BLUE)Running quick demo...$(NC)"
 	@./tests/demo.sh --quick --auto && echo "$(GREEN)✓ Demo completed$(NC)"
 
+##@ Go Development
+
+.PHONY: build
+build: go-mod-tidy build-apps ## Build all applications - use dist/ binaries for production
+
+.PHONY: build-local
+build-local: go-mod-tidy ## Build dist/ binary for current platform only (faster)
+	@echo "$(BLUE)Building claude-reactor for current platform in dist/...$(NC)"
+	@mkdir -p dist
+	@go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE) ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Local binary built: dist/claude-reactor-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(ARCHITECTURE)$(NC)"
+
+.PHONY: go-build
+go-build: build ## Build Go binary (alias for build)
+	@echo "$(GREEN)✓ Go binaries built in dist/$(NC)"
+
+.PHONY: build-reactor
+build-reactor: go-mod-tidy ## Build claude-reactor binaries for all major architectures
+	@echo "$(BLUE)Building claude-reactor binaries for all platforms...$(NC)"
+	@mkdir -p dist
+	@GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-amd64 ./cmd/claude-reactor
+	@GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-arm64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-amd64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-arm64 ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Claude-reactor binaries built in dist/$(NC)"
+
+.PHONY: build-apps
+build-apps: build-reactor ## Build all applications (binaries in dist/)
+
+.PHONY: install
+install: ## Install claude-reactor to system PATH using INSTALL script
+	@echo "$(BLUE)Installing claude-reactor to system PATH...$(NC)"
+	@./INSTALL
+
+.PHONY: uninstall 
+uninstall: ## Remove claude-reactor from system PATH using INSTALL script
+	@echo "$(BLUE)Removing claude-reactor from system PATH...$(NC)"
+	@./INSTALL --uninstall
+
+.PHONY: go-build-all
+go-build-all: ## Build Go binaries for multiple platforms
+	@echo "$(BLUE)Building Go binaries for multiple platforms...$(NC)"
+	@mkdir -p dist
+	@GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-amd64 ./cmd/claude-reactor
+	@GOOS=linux GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-linux-arm64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-amd64 ./cmd/claude-reactor
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE)" \
+		-o dist/claude-reactor-darwin-arm64 ./cmd/claude-reactor
+	@echo "$(GREEN)✓ Multi-platform binaries built in dist/$(NC)"
+
+.PHONY: go-lint
+go-lint: ## Run Go linting
+	@echo "$(BLUE)Running Go linting...$(NC)"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./... ; \
+		echo "$(GREEN)✓ Go linting completed$(NC)" ; \
+	else \
+		echo "$(YELLOW)⚠ golangci-lint not found, running basic go vet$(NC)" ; \
+		go vet ./... ; \
+	fi
+
+.PHONY: go-fmt
+go-fmt: ## Format Go code
+	@echo "$(BLUE)Formatting Go code...$(NC)"
+	@go fmt ./...
+	@echo "$(GREEN)✓ Go code formatted$(NC)"
+
+.PHONY: go-mod-tidy
+go-mod-tidy: ## Tidy Go modules
+	@echo "$(BLUE)Tidying Go modules...$(NC)"
+	@go mod tidy
+	@echo "$(GREEN)✓ Go modules tidied$(NC)"
+
+.PHONY: go-deps
+go-deps: ## Download Go dependencies
+	@echo "$(BLUE)Downloading Go dependencies...$(NC)"
+	@go mod download
+	@echo "$(GREEN)✓ Go dependencies downloaded$(NC)"
+
 ##@ Development
 
 .PHONY: dev-setup
 dev-setup: ## Set up development environment
 	@echo "$(BLUE)Setting up development environment...$(NC)"
-	@chmod +x claude-reactor
 	@chmod +x tests/*.sh
 	@chmod +x tests/*/*.sh
+	@make go-deps
 	@echo "$(GREEN)✓ Development environment ready$(NC)"
 
 .PHONY: lint
@@ -236,40 +369,41 @@ test-persistence: ## Test Claude CLI configuration persistence across container 
 
 ##@ Container Management
 
+
 .PHONY: run-base
-run-base: ## Run base variant container (delegates to claude-reactor)
+run-base: ## Run base variant container (uses go run)
 	@echo "$(BLUE)Starting base variant container...$(NC)"
-	./claude-reactor --variant base
+	go run ./cmd/claude-reactor run --image base
 
 .PHONY: run-go
-run-go: ## Run Go variant container (delegates to claude-reactor)
+run-go: ## Run Go variant container (uses go run)
 	@echo "$(BLUE)Starting Go variant container...$(NC)"
-	./claude-reactor --variant go
+	go run ./cmd/claude-reactor run --image go
 
 .PHONY: run-full
-run-full: ## Run full variant container (delegates to claude-reactor)
+run-full: ## Run full variant container (uses go run)
 	@echo "$(BLUE)Starting full variant container...$(NC)"
-	./claude-reactor --variant full
+	go run ./cmd/claude-reactor run --image full
 
 .PHONY: run-cloud
-run-cloud: ## Run cloud variant container (delegates to claude-reactor)
+run-cloud: ## Run cloud variant container (uses go run)
 	@echo "$(BLUE)Starting cloud variant container...$(NC)"
-	./claude-reactor --variant cloud
+	go run ./cmd/claude-reactor run --image cloud
 
 .PHONY: run-k8s
-run-k8s: ## Run Kubernetes variant container (delegates to claude-reactor)
+run-k8s: ## Run Kubernetes variant container (uses go run)
 	@echo "$(BLUE)Starting Kubernetes variant container...$(NC)"
-	./claude-reactor --variant k8s
+	go run ./cmd/claude-reactor run --image k8s
 
 .PHONY: run
-run: ## Run container with auto-detected or saved variant (delegates to claude-reactor)
+run: ## Run container with auto-detected or saved variant (uses go run)
 	@echo "$(BLUE)Starting container with smart variant detection...$(NC)"
-	./claude-reactor
+	go run ./cmd/claude-reactor
 
 .PHONY: stop-all
-stop-all: ## Stop all running claude-agent containers (delegates to claude-reactor cleanup)
+stop-all: ## Stop all running claude-agent containers (uses go run)
 	@echo "$(BLUE)Stopping all claude-agent containers...$(NC)"
-	@./claude-reactor --clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
+	@go run ./cmd/claude-reactor clean > /dev/null 2>&1 || docker ps --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker stop
 	@echo "$(GREEN)✓ All containers stopped$(NC)"
 
 .PHONY: logs
@@ -284,18 +418,18 @@ logs: ## Show logs from most recent claude-agent container
 
 .PHONY: config
 config: ## Show current claude-reactor configuration
-	@./claude-reactor --show-config
+	@go run ./cmd/claude-reactor config show
 
 .PHONY: variants
 variants: ## List available container variants
-	@./claude-reactor --list-variants
+	@go run ./cmd/claude-reactor debug info
 
 ##@ Cleanup
 
 .PHONY: clean-containers
-clean-containers: ## Remove all claude-agent containers (delegates to claude-reactor)
+clean-containers: ## Remove all claude-agent containers (uses go run)
 	@echo "$(BLUE)Removing claude-agent containers...$(NC)"
-	@./claude-reactor --clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
+	@go run ./cmd/claude-reactor clean > /dev/null 2>&1 || docker ps -a --format '{{.Names}}' | grep '^claude-agent' | xargs -r docker rm -f
 	@echo "$(GREEN)✓ Containers cleaned$(NC)"
 
 .PHONY: clean-images
@@ -332,7 +466,7 @@ ci-test: dev-setup test-unit test-integration-quick ## Run CI-appropriate tests
 	@echo "$(GREEN)✓ CI tests completed$(NC)"
 
 .PHONY: ci-build
-ci-build: build-all ## Build core variants for CI
+ci-build: go-mod-tidy build build-all ## Build core variants for CI
 	@echo "$(GREEN)✓ CI build completed$(NC)"
 
 .PHONY: ci-full

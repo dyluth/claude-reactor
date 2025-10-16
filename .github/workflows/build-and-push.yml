@@ -19,7 +19,45 @@ env:
   IMAGE_NAME: dyluth/claude-reactor
 
 jobs:
+  test-and-coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Run tests with coverage
+      run: |
+        go test -v -coverprofile=coverage.out ./...
+        
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Current coverage: ${COVERAGE}%"
+        
+        # Convert to integer for comparison
+        COVERAGE_INT=$(echo "$COVERAGE" | cut -d. -f1)
+        
+        if [ "$COVERAGE_INT" -lt 34 ]; then
+          echo "❌ Coverage ${COVERAGE}% is below minimum threshold of 34%"
+          exit 1
+        else
+          echo "✅ Coverage ${COVERAGE}% meets minimum threshold of 34%"
+        fi
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+
   build-and-push:
+    needs: test-and-coverage
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -77,16 +115,17 @@ jobs:
         build-args: |
           BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           GIT_COMMIT=${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: type=gha,scope=${{ matrix.variant }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+        network: host
 
     - name: Test image
-      if: github.event_name == 'pull_request'
+      if: github.event_name != 'pull_request'
       run: |
-        docker run --rm --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.event.pull_request.head.sha }} claude --version
+        docker run --rm --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.sha }} claude --version
 
   integration-test:
-    needs: build-and-push
+    needs: [test-and-coverage, build-and-push]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     
@@ -109,22 +148,55 @@ jobs:
         make test-unit
         # Note: Full integration tests require proper Claude CLI setup
 
-  security-scan:
-    needs: build-and-push
+  security-scan-pr:
+    needs: [test-and-coverage]
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    
-    strategy:
-      matrix:
-        variant: [base, go, full]
+    if: github.event_name == 'pull_request'
     
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run Trivy filesystem scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+
+    - name: Run Trivy config scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: '.'
+        format: 'table'
+
+  security-scan-merged:
+    needs: [test-and-coverage, build-and-push]
+    runs-on: ubuntu-latest
+    # Only run security scans on pushes to main and tags, not on PRs
+    if: github.event_name != 'pull_request'
+
+    strategy:
+      matrix:
+        variant: [base, go, full]  # Only scan core variants to reduce CI time
+
+    steps:
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:latest'
+        # Scan published registry images (only runs after push to registry)
+        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.variant }}:${{ github.sha }}'
         format: 'sarif'
         output: 'trivy-results.sarif'
+        skip-version-check: true
 
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
