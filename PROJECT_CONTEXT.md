@@ -54,7 +54,7 @@ The project exists to solve a fundamental problem: enabling safe, isolated Claud
 - **Configuration Management**: YAML-based persistence with account/project isolation
 - **Docker Abstraction**: Clean interface over Docker SDK with lifecycle management
 - **Authentication System**: Account-specific credential management with OAuth support
-- **Mount Management**: Secure, validated file system mounting with permission control
+- **Mount Management**: Secure, validated file system mounting with permission control including subagent directories
 - **Image Validation**: Custom Docker image compatibility and security checking
 
 ### **Multi-Variant Container System**
@@ -180,7 +180,8 @@ Development workflow optimized for team collaboration:
 
 ### ✅ **Completed Features**
 - **Account Isolation System**: Complete separation of credentials, sessions, and containers
-- **VS Code Integration**: Automatic dev container generation with project detection  
+- **Subagent Support**: Automatic mounting of global (~/.claude/agents/) and project-specific (.claude/agents/) subagents
+- **VS Code Integration**: Automatic dev container generation with project detection
 - **Project Templates**: Interactive scaffolding with built-in language templates
 - **Custom Image Support**: Docker image validation and compatibility checking
 - **Registry Integration**: Multi-architecture container distribution with local fallback

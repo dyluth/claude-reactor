@@ -236,9 +236,14 @@ func (m *manager) CopyMainConfigToAccount(account string) error {
 				config["projects"] = containerProjects
 			}
 			
-			// Remove any host-specific additional directories or working directories
+			// Remove any host-specific additional directories
 			delete(config, "additionalDirectories")
-			delete(config, "workingDirectories")
+
+			// Set workingDirectories to map /app to itself (container-safe)
+			// This ensures Claude CLI can find conversations when running from /app
+			config["workingDirectories"] = map[string]interface{}{
+				"/app": "/app",
+			}
 		}
 	} else {
 		m.logger.Warnf("Main claude config not found: %s", mainConfigPath)
@@ -277,6 +282,9 @@ func (m *manager) CopyMainConfigToAccount(account string) error {
 					"hasClaudeMdExternalIncludesApproved":   false,
 					"hasClaudeMdExternalIncludesWarningShown": false,
 				},
+			},
+			"workingDirectories": map[string]interface{}{
+				"/app": "/app",
 			},
 		}
 	}

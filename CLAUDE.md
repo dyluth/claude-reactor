@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Value Propositions**:
 - **Complete Account Isolation**: Each Claude account gets separate credentials, sessions, and containers
+- **Subagent Support**: Automatic mounting of global and project-specific Claude Code subagents
 - **Persistent Authentication**: No re-login required when restarting containers
 - **Project-Specific Sessions**: Isolated conversation history per project/account combination
 - **Smart Container Management**: Intelligent reuse vs recreation based on command arguments
@@ -72,6 +73,55 @@ claude-reactor/
 ├── ai-prompts/                # Implementation specifications
 │   └── 6-distributed-mcp-orchestration-system.md
 └── .claude-reactor            # Auto-generated project configuration
+```
+
+## Subagent Support
+
+Claude-reactor automatically mounts both global and project-specific subagents into containers, making your custom AI agents available in the containerized environment.
+
+### **Subagent Directory Structure**
+
+**Global Subagents (shared across all projects):**
+```
+~/.claude/agents/          # Host location
+  ├── backend-expert.md
+  ├── frontend-guru.md
+  └── devops-specialist.md
+```
+
+**Project-Specific Subagents (versioned with repository):**
+```
+{project}/.claude/agents/  # Host location (project directory)
+  ├── api-designer.md
+  ├── db-architect.md
+  └── testing-wizard.md
+```
+
+### **Container Mount Points**
+
+When you run claude-reactor, subagents are automatically mounted:
+
+- **Global subagents**: `~/.claude/agents/` → `/home/claude/.claude/agents/`
+- **Project subagents**: `{project}/.claude/agents/` → `/app/.claude/agents/` (via project mount)
+
+### **Usage in Container**
+
+Claude Code automatically detects and loads subagents from both locations. When naming conflicts occur, project-specific subagents take precedence over global ones.
+
+```bash
+# Run container - subagents are automatically available
+claude-reactor run
+
+# Inside container, Claude Code can invoke your subagents
+# They work exactly as they do on your host system
+```
+
+### **Subagent Visibility**
+
+When subagents are detected, you'll see log messages during container startup:
+```
+🤖 Global subagents mount: /Users/cam/.claude/agents -> /home/claude/.claude/agents
+🤖 Project subagents detected: /path/to/project/.claude/agents (available via project mount)
 ```
 
 ## Account Isolation and Authentication

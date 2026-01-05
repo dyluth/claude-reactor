@@ -729,7 +729,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 		if err != nil {
 			return fmt.Errorf("failed to prepare SSH mounts: %w", err)
 		}
-		
+
 		for _, mount := range sshMounts {
 			err = app.MountMgr.AddMountToConfig(containerConfig, mount.Source, mount.Target)
 			if err != nil {
@@ -738,13 +738,47 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 				app.Logger.Infof("🔑 SSH mount: %s -> %s", mount.Source, mount.Target)
 			}
 		}
-		
+
 		// Skip SSH_AUTH_SOCK setup - using direct SSH key mounting instead
 		// This is more reliable than agent forwarding for Git operations on Docker Desktop
 		if containerConfig.Environment == nil {
 			containerConfig.Environment = make(map[string]string)
 		}
 		app.Logger.Info("🔑 SSH keys configured for Git operations")
+	}
+
+	// Add global subagents mount if directory exists
+	// Global subagents are stored in ~/.claude/agents/ and available across all projects
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		globalSubagentsDir := filepath.Join(homeDir, ".claude", "agents")
+		if _, err := os.Stat(globalSubagentsDir); err == nil {
+			// Ensure the target directory exists in the session directory
+			sessionSubagentsDir := filepath.Join(claudeSessionDir, "agents")
+			if err := os.MkdirAll(sessionSubagentsDir, 0755); err != nil {
+				app.Logger.Warnf("Failed to create session subagents directory: %v", err)
+			} else {
+				err = app.MountMgr.AddMountToConfig(containerConfig, globalSubagentsDir, "/home/claude/.claude/agents")
+				if err != nil {
+					app.Logger.Warnf("Failed to add global subagents mount: %v", err)
+				} else {
+					app.Logger.Infof("🤖 Global subagents mount: %s -> /home/claude/.claude/agents", globalSubagentsDir)
+				}
+			}
+		} else {
+			app.Logger.Debugf("Global subagents directory not found: %s", globalSubagentsDir)
+		}
+	}
+
+	// Add project-specific subagents mount if directory exists
+	// Project-specific subagents are stored in {project}/.claude/agents/ and versioned with the repo
+	projectSubagentsDir := filepath.Join(projectDir, ".claude", "agents")
+	if _, err := os.Stat(projectSubagentsDir); err == nil {
+		// The project directory is already mounted at /app or /workspace,
+		// so project subagents will be automatically available at /app/.claude/agents
+		// or /workspace/.claude/agents. We just log this for visibility.
+		app.Logger.Infof("🤖 Project subagents detected: %s (available via project mount)", projectSubagentsDir)
+	} else {
+		app.Logger.Debugf("Project-specific subagents directory not found: %s", projectSubagentsDir)
 	}
 
 	// Add user-specified mounts
