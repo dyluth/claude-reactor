@@ -14,7 +14,6 @@ import (
 	"claude-reactor/pkg"
 )
 
-
 // NewRunCmd creates the run command for starting and connecting to Claude CLI containers
 func NewRunCmd(app *pkg.AppContainer) *cobra.Command {
 	var runCmd = &cobra.Command{
@@ -87,21 +86,23 @@ Related Commands:
 	runCmd.Flags().StringP("account", "", "", "Claude account to use")
 	runCmd.Flags().StringP("apikey", "", "", "Set API key for this session (creates account-specific env file)")
 	runCmd.Flags().BoolP("interactive-login", "", false, "Force interactive authentication for account")
-	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode (--dangerously-skip-permissions)")
-	runCmd.Flags().BoolP("host-docker", "", false, "Enable host Docker socket access (⚠️  SECURITY: grants host-level Docker privileges)")
-	runCmd.Flags().StringP("host-docker-timeout", "", "5m", "Timeout for Docker operations (use '0' to disable timeout)")
-	runCmd.Flags().StringP("ssh-agent", "", "", "Enable SSH agent forwarding (auto-detect or specify socket path)")
-	runCmd.Flags().Lookup("ssh-agent").NoOptDefVal = "auto"
 	runCmd.Flags().BoolP("shell", "", false, "Launch shell instead of Claude CLI")
 	runCmd.Flags().StringSliceP("mount", "m", []string{}, "Additional mount points (can be used multiple times)")
 	runCmd.Flags().BoolP("no-persist", "", false, "Remove container when finished (default: keep running)")
-	runCmd.Flags().BoolP("no-mounts", "", false, "Skip mounting directories (for testing)")
 
-	// Registry flags (Phase 0.1)
-	runCmd.Flags().BoolP("dev", "", false, "Force local build (disable registry pulls)")
-	runCmd.Flags().BoolP("registry-off", "", false, "Disable registry completely")
-	runCmd.Flags().BoolP("pull-latest", "", false, "Force pull latest from registry")
-	runCmd.Flags().BoolP("no-continue", "", false, "Disable conversation continuation (default: enabled)")
+	// Advanced / Deprecated flags (use config instead)
+	runCmd.Flags().BoolP("danger", "", false, "Enable danger mode")
+	runCmd.Flags().MarkHidden("danger")
+
+	runCmd.Flags().BoolP("host-docker", "", false, "Enable host Docker socket access")
+	runCmd.Flags().MarkHidden("host-docker")
+
+	runCmd.Flags().StringP("host-docker-timeout", "", "5m", "Timeout for Docker operations")
+	runCmd.Flags().MarkHidden("host-docker-timeout")
+
+	runCmd.Flags().StringP("ssh-agent", "", "", "Enable SSH agent forwarding")
+	runCmd.Flags().MarkHidden("ssh-agent")
+	runCmd.Flags().Lookup("ssh-agent").NoOptDefVal = "auto"
 
 	return runCmd
 }
@@ -127,31 +128,6 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	mounts, _ := cmd.Flags().GetStringSlice("mount")
 	noPersist, _ := cmd.Flags().GetBool("no-persist")
 	persist := !noPersist // Default to true, unless --no-persist is specified
-	noMounts, _ := cmd.Flags().GetBool("no-mounts")
-
-	// Registry flags (Phase 0.1)
-	devMode, _ := cmd.Flags().GetBool("dev")
-	registryOff, _ := cmd.Flags().GetBool("registry-off")
-	pullLatest, _ := cmd.Flags().GetBool("pull-latest")
-
-	// Conversation control (Phase 0.3)
-	noContinue, _ := cmd.Flags().GetBool("no-continue")
-
-	// Detect if any arguments were passed for smart container reuse logic
-	// Reuse ONLY when `claude-reactor run` called with NO arguments
-	// Recreate when ANY arguments passed
-	hasArgs := cmd.Flags().Changed("image") || cmd.Flags().Changed("account") || 
-			   cmd.Flags().Changed("danger") || cmd.Flags().Changed("shell") ||
-			   cmd.Flags().Changed("no-persist") || cmd.Flags().Changed("host-docker") ||
-			   cmd.Flags().Changed("host-docker-timeout") || cmd.Flags().Changed("ssh-agent") ||
-			   cmd.Flags().Changed("apikey") ||
-			   cmd.Flags().Changed("interactive-login") || cmd.Flags().Changed("no-mounts") ||
-			   cmd.Flags().Changed("dev") || cmd.Flags().Changed("registry-off") ||
-			   cmd.Flags().Changed("pull-latest") || cmd.Flags().Changed("no-continue") ||
-			   len(mounts) > 0
-	
-	app.Logger.Debugf("Smart container reuse: hasArgs=%v (will %s)", hasArgs, 
-		func() string { if hasArgs { return "recreate" } else { return "reuse" } }())
 
 	// Ensure Docker components are initialized
 	if err := reactor.EnsureDockerComponents(app); err != nil {
@@ -174,7 +150,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if account != "" {
 		config.Account = account
 	}
-	
+
 	// Normalize account to use new default account logic ($USER fallback to "user")
 	if config.Account == "" {
 		config.Account = app.AuthMgr.GetDefaultAccount()
@@ -237,11 +213,11 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	// Handle SSH agent configuration with persistence logic
 	var sshAgentEnabled bool
 	var sshAgentSocket string
-	
+
 	if cmd.Flags().Changed("ssh-agent") {
 		// SSH agent flag was provided (with or without value)
 		sshAgentEnabled = true
-		
+
 		if sshAgent == "" || sshAgent == "auto" {
 			// Auto-detect SSH agent socket
 			detectedSocket, err := app.ConfigMgr.DetectSSHAgent()
@@ -257,12 +233,12 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			config.SSHAgentSocket = sshAgent
 			app.Logger.Infof("🔑 SSH agent socket specified: %s (will be persisted)", sshAgent)
 		}
-		
+
 		// Validate SSH agent connectivity
 		if err := app.ConfigMgr.ValidateSSHAgent(sshAgentSocket); err != nil {
 			return fmt.Errorf("SSH agent validation failed: %w", err)
 		}
-		
+
 		config.SSHAgent = true
 		app.Logger.Info("✅ SSH agent validation passed")
 	} else if config.SSHAgent {
@@ -283,7 +259,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			// Use explicit socket from config
 			sshAgentSocket = config.SSHAgentSocket
 			app.Logger.Infof("🔑 Using persistent SSH agent setting: %s", sshAgentSocket)
-			
+
 			// Re-validate socket
 			if err := app.ConfigMgr.ValidateSSHAgent(sshAgentSocket); err != nil {
 				app.Logger.Warnf("Persistent SSH agent socket invalid, disabling: %v", err)
@@ -390,15 +366,6 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 	}
 
-	// Log registry configuration if relevant
-	if devMode {
-		app.Logger.Info("🔨 Registry: Dev mode enabled - forcing local builds")
-	} else if registryOff {
-		app.Logger.Info("🔨 Registry: Registry disabled - using local builds only")
-	} else if pullLatest {
-		app.Logger.Info("📦 Registry: Force pulling latest images from registry")
-	}
-
 	if config.SessionPersistence {
 		app.Logger.Infof("📋 Configuration: image=%s, account=%s, danger=%t, shell=%t, persist=%t, session_persistence=%t",
 			config.Variant, config.Account, config.DangerMode, shell, persist, config.SessionPersistence)
@@ -416,6 +383,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
+	config.ProjectPath = projectDir
 
 	// Step 3: Generate container and image names
 	app.Logger.Info("🔧 Detecting system architecture...")
@@ -427,16 +395,26 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 	containerName := app.DockerMgr.GenerateContainerName(projectDir, config.Variant, arch, config.Account)
 	app.Logger.Infof("🏷️ Container name: %s", containerName)
 
-	// Step 3: Build image if needed
+	// Step 4: Resolve and Ensure Image
+	imageName := app.DockerMgr.GetImageName(config.Variant, arch)
+
+	if isBuiltinVariant {
+		// Check if local image exists by checking its validity without pull
+		if _, err := app.ImageValidator.ValidateImage(ctx, imageName, false); err != nil {
+			// Local image missing, switch to registry
+			registryImage := fmt.Sprintf("ghcr.io/dyluth/claude-reactor-%s:latest", config.Variant)
+			app.Logger.Infof("📦 Local image '%s' not found, using registry: %s", imageName, registryImage)
+			imageName = registryImage
+		} else {
+			app.Logger.Infof("✅ Found local image: %s", imageName)
+		}
+	}
+
 	app.Logger.Info("🐳 Preparing Docker environment...")
 	platform, err := app.ArchDetector.GetDockerPlatform()
 	if err != nil {
 		return fmt.Errorf("failed to get Docker platform: %w. Architecture detection failed", err)
 	}
-
-	imageName := app.DockerMgr.GetImageName(config.Variant, arch)
-	app.Logger.Infof("🔨 Building image if needed: %s", imageName)
-	app.Logger.Info("⏳ This may take a few minutes for first-time setup...")
 
 	// Create Docker operation context with timeout if host Docker is enabled
 	dockerCtx := ctx
@@ -448,31 +426,21 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		app.Logger.Infof("🕒 Docker operations timeout set to: %s", hostDockerTimeout)
 	}
 
-	// Build image with registry support (Phase 0.1)
-	err = app.DockerMgr.BuildImageWithRegistry(dockerCtx, config.Variant, platform, devMode, registryOff, pullLatest)
-	if err != nil {
-		// Check for timeout error
-		if dockerCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
-		}
-		return fmt.Errorf("failed to build image: %w. Try running 'docker system prune' to free space or check your Dockerfile", err)
-	}
-
-	// Step 4: Create container configuration
+	// Step 5: Create container configuration
 	containerConfig := &pkg.ContainerConfig{
-		Image:            imageName,
-		Name:             containerName,
-		Variant:          config.Variant,
-		Platform:         platform,
-		Interactive:      true,
-		TTY:              true,
-		Remove:           false, // Don't auto-remove - we manage lifecycle
-		RunClaudeUpgrade: true,  // Run claude upgrade after container startup
-		HostDocker:       hostDocker,
+		Image:             imageName,
+		Name:              containerName,
+		Variant:           config.Variant,
+		Platform:          platform,
+		Interactive:       true,
+		TTY:               true,
+		Remove:            false, // Don't auto-remove - we manage lifecycle
+		RunClaudeUpgrade:  true,  // Run claude upgrade after container startup
+		HostDocker:        hostDocker,
 		HostDockerTimeout: hostDockerTimeout,
-		SSHAgent:         sshAgentEnabled,
-		SSHAgentSocket:   sshAgentSocket,
-		Environment:      make(map[string]string),
+		SSHAgent:          sshAgentEnabled,
+		SSHAgentSocket:    sshAgentSocket,
+		Environment:       make(map[string]string),
 	}
 
 	// Configure timezone to match host
@@ -491,93 +459,90 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		}
 	}
 
-	// Add mounts (skip if requested for testing)
-	if !noMounts {
-		app.Logger.Info("📁 Configuring container mounts...")
-		err = AddMountsToContainer(app, containerConfig, config.Account, mounts, projectDir)
-		if err != nil {
-			return fmt.Errorf("failed to configure mounts: %w. Check that source directories exist and are accessible", err)
-		}
-	} else {
-		app.Logger.Info("🚫 Skipping mounts due to --no-mounts flag")
-		// Set empty mounts to prevent default mount creation
-		containerConfig.Mounts = []pkg.Mount{}
+	// Add mounts
+	app.Logger.Info("📁 Configuring container mounts...")
+	err = AddMountsToContainer(app, containerConfig, config.Account, mounts, projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to configure mounts: %w. Check that source directories exist and are accessible", err)
 	}
 
-	// Step 5: Smart container lifecycle management
+	// Step 6: Lifecycle Management
 	var containerID string
-	
-	// Check if container already exists for this project/account
+
+	// Check if container already exists
 	containerExists, err := app.DockerMgr.IsContainerRunning(dockerCtx, containerName)
 	if err != nil {
 		app.Logger.Debugf("Failed to check container status: %v", err)
 		containerExists = false
 	}
-	
-	// Apply smart reuse logic
-	if containerExists && !hasArgs {
-		// Reuse existing container when no arguments passed
-		app.Logger.Info("♻️ Reusing existing container (no arguments passed)...")
-		
-		// For reuse, we need to attach to the existing container
-		// First get the container status to get its ID
+
+	if containerExists {
+		// Reuse existing
+		app.Logger.Info("♻️ Reusing existing container...")
 		status, err := app.DockerMgr.GetContainerStatus(dockerCtx, containerName)
 		if err != nil {
 			return fmt.Errorf("failed to get container status for reuse: %w", err)
 		}
 		containerID = status.ID
-		
-	} else if containerExists && hasArgs {
-		// Recreate container when arguments passed
-		app.Logger.Info("🔄 Recreating container (arguments passed, forcing recreation)...")
-		
-		// Remove existing container first
-		err = app.DockerMgr.CleanContainer(dockerCtx, containerName)
-		if err != nil {
-			app.Logger.Warnf("Failed to remove existing container: %v", err)
-		}
-		
-		// Start new container
-		if config.SessionPersistence {
-			containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
-		} else {
-			containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
-		}
-		if err != nil {
-			if dockerCtx.Err() == context.DeadlineExceeded {
-				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
-			}
-			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
-		}
-		
 	} else {
-		// No existing container, start new one
+		// Start new or resume stopped
+		status, err := app.DockerMgr.GetContainerStatus(dockerCtx, containerName)
+		if err != nil {
+			app.Logger.Debugf("Failed to get status for potentially stopped container: %v", err)
+		}
+
 		if config.SessionPersistence {
-			app.Logger.Info("🔄 Starting container with session persistence...")
+			app.Logger.Info("🔄 Starting/Resuming container with session persistence...")
+			// StartOrRecoverContainer handles logic for resuming stopped containers
 			containerID, err = app.DockerMgr.StartOrRecoverContainer(dockerCtx, containerConfig, config)
 		} else {
 			app.Logger.Info("🏗️ Starting ephemeral container...")
+			// If ephemeral and exists (but stopped/dead), we must clean it first to avoid name conflict
+			if status != nil && status.Exists {
+				app.Logger.Debug("Removing stopped ephemeral container before recreation...")
+				if err := app.DockerMgr.RemoveContainer(dockerCtx, status.ID); err != nil {
+					app.Logger.Warnf("Failed to remove stopped container: %v", err)
+				}
+			}
 			containerID, err = app.DockerMgr.StartContainer(dockerCtx, containerConfig)
 		}
+
 		if err != nil {
 			if dockerCtx.Err() == context.DeadlineExceeded {
-				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m\n💡 For unlimited time, disable timeout: --host-docker-timeout 0\n💡 Save preference: echo \"host_docker_timeout=15m\" >> .claude-reactor", hostDockerTimeout)
+				return fmt.Errorf("Docker operation timed out after %s\n💡 For complex builds, increase timeout: --host-docker-timeout 15m", hostDockerTimeout)
 			}
 			return fmt.Errorf("failed to start container: %w. Check Docker daemon is running and try 'docker system prune'", err)
 		}
 	}
-	
+
 	// Update session tracking for session persistence
 	if config.SessionPersistence {
 		config.ContainerID = containerID
-		if err := app.ConfigMgr.SaveConfig(config); err != nil {
-			app.Logger.Warnf("Failed to save session configuration: %v", err)
+	}
+	// Always save config to current directory for persistence
+	if err := app.ConfigMgr.SaveConfig(config); err != nil {
+		app.Logger.Warnf("Failed to save session configuration: %v", err)
+	}
+
+	// Also save config to session directory so 'list' command can read metadata
+	// calculated session dir: ~/.claude-reactor/{account}/{project-name}-{project-hash}/
+	sessionDir := app.AuthMgr.GetProjectSessionDir(config.Account, config.ProjectPath)
+	if sessionDir != "" {
+		if err := os.MkdirAll(sessionDir, 0755); err == nil {
+			sessionConfigPath := filepath.Join(sessionDir, ".claude-reactor")
+			// We manually write this for now as ConfigMgr doesn't support custom paths yet
+			// In a future refactor, we should add SaveConfigToPath(path, config)
+			if data, err := os.ReadFile(".claude-reactor"); err == nil {
+				if err := os.WriteFile(sessionConfigPath, data, 0644); err != nil {
+					app.Logger.Debugf("Failed to backup config to session dir: %v", err)
+				}
+			}
 		}
 	}
 
 	app.Logger.Info("✅ Container started successfully!")
 
-	// Step 6: Attach to container
+	// Step 7: Attach to container
 	var command []string
 	if shell {
 		command = []string{"/bin/bash"}
@@ -595,18 +560,13 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 			app.Logger.Info("🤖 Launching Claude CLI in container...")
 		}
 
-		// Conversation control (Phase 0.3)
-		// TEMPORARY: Disable --continue until additional working directories issue is resolved
-		if noContinue {
-			app.Logger.Info("💬 Conversation continuation disabled")
-		} else {
-			// TODO: Fix additional working directories issue before re-enabling --continue
-			app.Logger.Debug("💬 Conversation continuation temporarily disabled due to path issue")
-		}
+		// Conversation control
+		// TODO: Fix additional working directories issue before re-enabling --continue support
+		app.Logger.Debug("💬 Conversation continuation temporarily disabled due to path issue")
+
 		if app.Debug {
 			command = append(command, "-d", "--verbose")
 		}
-
 	}
 
 	// Attach to container
@@ -615,7 +575,7 @@ func RunContainer(cmd *cobra.Command, app *pkg.AppContainer) error {
 		return fmt.Errorf("failed to attach to container: %w. Try using 'docker exec -it %s %s' as fallback", err, containerName, strings.Join(command, " "))
 	}
 
-	// Step 7: Handle container persistence
+	// Step 8: Handle container persistence
 	if !persist {
 		app.Logger.Info("🧹 Stopping container due to --persist=false...")
 		if err := app.DockerMgr.StopContainer(ctx, containerID); err != nil {
@@ -648,7 +608,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 	// This contains conversation history, shell snapshots, todos, etc.
 	// Format: ~/.claude-reactor/{account}/{project-name}-{project-hash}/
 	claudeSessionDir := app.AuthMgr.GetProjectSessionDir(account, projectDir)
-	
+
 	// Ensure session directory exists (including parent account directory)
 	if err := os.MkdirAll(claudeSessionDir, 0755); err != nil {
 		app.Logger.Warnf("Failed to create Claude session directory: %v", err)
@@ -692,7 +652,7 @@ func AddMountsToContainer(app *pkg.AppContainer, containerConfig *pkg.ContainerC
 			app.Logger.Infof("🔑 Claude config mount: %s -> /home/claude/.claude.json", projectClaudeConfig)
 		}
 	}
-	
+
 	// Mount the main user's credentials file for OAuth tokens
 	homeDir, err := os.UserHomeDir()
 	if err == nil {

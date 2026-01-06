@@ -11,19 +11,19 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	
+
 	"claude-reactor/pkg"
 )
 
 // ProjectInfo represents project metadata for list command
 type ProjectInfo struct {
-	Account       string    `json:"account"`
-	ProjectName   string    `json:"project_name"`
-	ProjectHash   string    `json:"project_hash"`
-	ProjectPath   string    `json:"project_path"`
-	Containers    []string  `json:"containers"`
-	LastUsed      time.Time `json:"last_used"`
-	SessionDir    string    `json:"session_dir"`
+	Account     string    `json:"account"`
+	ProjectName string    `json:"project_name"`
+	ProjectHash string    `json:"project_hash"`
+	ProjectPath string    `json:"project_path"`
+	Containers  []string  `json:"containers"`
+	LastUsed    time.Time `json:"last_used"`
+	SessionDir  string    `json:"session_dir"`
 }
 
 // ListResponse represents the complete list command response
@@ -75,6 +75,13 @@ func RunList(cmd *cobra.Command, app *pkg.AppContainer) error {
 		return fmt.Errorf("failed to scan claude-reactor directory: %w", err)
 	}
 
+	// Check if a hash argument was provided
+	args := cmd.Flags().Args()
+	if len(args) > 0 {
+		hash := args[0]
+		return showProjectDetails(app, projects, hash)
+	}
+
 	// Build response
 	response := ListResponse{
 		Projects: projects,
@@ -100,6 +107,23 @@ func RunList(cmd *cobra.Command, app *pkg.AppContainer) error {
 	}
 }
 
+// showProjectDetails finds a project by hash and outputs detailed JSON
+func showProjectDetails(app *pkg.AppContainer, projects []ProjectInfo, hash string) error {
+	var foundProject *ProjectInfo
+	for _, p := range projects {
+		if strings.HasPrefix(p.ProjectHash, hash) {
+			foundProject = &p
+			break
+		}
+	}
+
+	if foundProject == nil {
+		return fmt.Errorf("project with hash '%s' not found", hash)
+	}
+
+	return outputJSON(foundProject)
+}
+
 // scanClaudeReactorDirectory scans ~/.claude-reactor for all accounts and projects
 func scanClaudeReactorDirectory(app *pkg.AppContainer) ([]ProjectInfo, error) {
 	homeDir, err := os.UserHomeDir()
@@ -108,7 +132,7 @@ func scanClaudeReactorDirectory(app *pkg.AppContainer) ([]ProjectInfo, error) {
 	}
 
 	claudeReactorDir := filepath.Join(homeDir, ".claude-reactor")
-	
+
 	// Check if directory exists
 	if _, err := os.Stat(claudeReactorDir); os.IsNotExist(err) {
 		app.Logger.Info("No ~/.claude-reactor directory found")
@@ -155,9 +179,24 @@ func scanClaudeReactorDirectory(app *pkg.AppContainer) ([]ProjectInfo, error) {
 				continue
 			}
 
-			// Try to determine project path (this is challenging since we only have the hash)
-			// For now, we'll leave it empty - could be enhanced later
-			projectPath := "" // TODO: Could try to reverse-lookup from hash if needed
+			// Try to read config from session directory to get project path
+			projectPath := ""
+			configFile := filepath.Join(sessionDir, ".claude-reactor")
+			if data, err := os.ReadFile(configFile); err == nil {
+				// Simple parsing to extract project_path
+				lines := strings.Split(string(data), "\n")
+				for _, line := range lines {
+					if strings.HasPrefix(line, "project_path=") {
+						projectPath = strings.TrimPrefix(line, "project_path=")
+						break
+					}
+				}
+			}
+
+			// I still empty, return "unknown" or leave empty to indicate it wasn't captured
+			if projectPath == "" {
+				projectPath = "(unknown)"
+			}
 
 			// Get last used timestamp
 			lastUsed := getLastUsedTimestamp(sessionDir)
@@ -239,18 +278,18 @@ func getAssociatedContainers(app *pkg.AppContainer, account, projectHash string)
 
 	variants := []string{"base", "go", "full", "cloud", "k8s"}
 	architectures := []string{"arm64", "amd64"}
-	
+
 	var containers []string
 
 	for _, variant := range variants {
 		for _, arch := range architectures {
 			// Generate container name using the same pattern as run.go
-			containerName := fmt.Sprintf("claude-reactor-%s-%s-%s-%s", 
+			containerName := fmt.Sprintf("claude-reactor-%s-%s-%s-%s",
 				variant, arch, projectHash, account)
 
 			// Check if this container exists
 			ctx := context.Background()
-			
+
 			exists, err := dockerMgr.IsContainerRunning(ctx, containerName)
 			if err == nil && exists {
 				containers = append(containers, containerName)
@@ -262,8 +301,8 @@ func getAssociatedContainers(app *pkg.AppContainer, account, projectHash string)
 }
 
 // outputJSON outputs the results in JSON format
-func outputJSON(response ListResponse) error {
-	jsonData, err := json.MarshalIndent(response, "", "  ")
+func outputJSON(v interface{}) error {
+	jsonData, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
@@ -284,13 +323,13 @@ func outputTable(response ListResponse) error {
 	}
 
 	// Print header
-	fmt.Printf("%-15s %-20s %-8s %-3s %-20s %s\n",
-		"ACCOUNT", "PROJECT", "HASH", "CTR", "LAST USED", "SESSION DIR")
-	fmt.Printf("%-15s %-20s %-8s %-3s %-20s %s\n",
+	fmt.Printf("%-15s %-20s %-8s %-10s %-20s %s\n",
+		"ACCOUNT", "PROJECT", "HASH", "CONTAINERS", "LAST USED", "PROJECT PATH")
+	fmt.Printf("%-15s %-20s %-8s %-10s %-20s %s\n",
 		strings.Repeat("-", 15),
 		strings.Repeat("-", 20),
 		strings.Repeat("-", 8),
-		strings.Repeat("-", 3),
+		strings.Repeat("-", 10),
 		strings.Repeat("-", 20),
 		strings.Repeat("-", 20))
 
@@ -301,13 +340,13 @@ func outputTable(response ListResponse) error {
 			lastUsedStr = formatRelativeTime(project.LastUsed)
 		}
 
-		fmt.Printf("%-15s %-20s %-8s %-3d %-20s %s\n",
+		fmt.Printf("%-15s %-20s %-8s %-10d %-20s %s\n",
 			truncate(project.Account, 15),
 			truncate(project.ProjectName, 20),
 			project.ProjectHash,
 			len(project.Containers),
 			lastUsedStr,
-			project.SessionDir)
+			project.ProjectPath)
 	}
 
 	// Print summary
