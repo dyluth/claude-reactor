@@ -15,7 +15,21 @@ func NewConfigCmd(app *pkg.AppContainer) *cobra.Command {
 		Use:   "config",
 		Short: "Manage claude-reactor configuration",
 		Long: `Display and manage claude-reactor configuration settings.
-View current configuration, account settings, and project-specific preferences.`,
+View current configuration, account settings, and project-specific preferences.
+
+Available configuration keys (use 'config set' to change):
+  variant              Docker image variant (base, go, full, cloud, k8s) or custom image
+  job_timeout          Job timeout duration (e.g. 10m, 1h)
+  account              Claude account to use
+  danger               Enable/disable danger mode (true/false)
+  host_docker          Enable/disable host Docker socket mounting (true/false)
+  host_docker_timeout  Timeout for host Docker operations (e.g., 5m)
+  ssh_agent            Enable/disable SSH agent forwarding (true/false)
+  ssh_agent_socket     Custom SSH agent socket path
+  session_persistence  Enable/disable session persistence (true/false)
+  last_session_id      Manually set the last session ID
+  container_id         Manually set the container ID
+  project_path         Default project path`,
 	}
 
 	configCmd.AddCommand(
@@ -59,7 +73,22 @@ func newConfigSetCmd(app *pkg.AppContainer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set [key] [value]",
 		Short: "Set configuration value",
-		Args:  cobra.ExactArgs(2),
+		Long: `Set a configuration value.
+
+Available configuration keys:
+  variant              Docker image variant (base, go, full, cloud, k8s) or custom image
+  job_timeout          Job timeout duration (e.g. 10m, 1h)
+  account              Claude account to use
+  danger               Enable/disable danger mode (true/false)
+  host_docker          Enable/disable host Docker socket mounting (true/false)
+  host_docker_timeout  Timeout for host Docker operations (e.g., 5m)
+  ssh_agent            Enable/disable SSH agent forwarding (true/false)
+  ssh_agent_socket     Custom SSH agent socket path
+  session_persistence  Enable/disable session persistence (true/false)
+  last_session_id      Manually set the last session ID
+  container_id         Manually set the container ID
+  project_path         Default project path`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Handle help case when app is nil
 			if app == nil {
@@ -80,7 +109,7 @@ func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
 
 	fmt.Printf("📋 Claude-Reactor Configuration\n")
 	fmt.Printf("═══════════════════════════════\n\n")
-	
+
 	fmt.Printf("🖼️  Image/Variant: %s\n", getDisplayValue(config.Variant, "auto-detect"))
 	fmt.Printf("👤 Account: %s\n", getDisplayValue(config.Account, "default"))
 	fmt.Printf("🔥 Danger Mode: %t\n", config.DangerMode)
@@ -88,15 +117,22 @@ func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if config.HostDocker {
 		fmt.Printf("⏰ Host Docker Timeout: %s\n", getDisplayValue(config.HostDockerTimeout, "5m"))
 	}
+	fmt.Printf("🔑 SSH Agent: %t\n", config.SSHAgent)
+	if config.SSHAgent && config.SSHAgentSocket != "" {
+		fmt.Printf("🔌 SSH Socket: %s\n", config.SSHAgentSocket)
+	}
 	fmt.Printf("💾 Session Persistence: %t\n", config.SessionPersistence)
 	if config.SessionPersistence {
 		fmt.Printf("🔗 Last Session ID: %s\n", getDisplayValue(config.LastSessionID, "none"))
 		fmt.Printf("📦 Container ID: %s\n", getDisplayValue(config.ContainerID, "none"))
 	}
-	
+
 	// Show current directory and project detection
 	fmt.Printf("\n📁 Current Directory: %s\n", getCurrentDir())
-	
+	if config.ProjectPath != "" {
+		fmt.Printf("📂 Configured Project Path: %s\n", config.ProjectPath)
+	}
+
 	// Show auto-detected variant
 	detectedVariant, err := app.ConfigMgr.AutoDetectVariant("")
 	if err == nil {
@@ -126,11 +162,11 @@ func validateConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
-	
+
 	if err := app.ConfigMgr.ValidateConfig(config); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
-	
+
 	fmt.Println("Configuration is valid ✓")
 	return nil
 }
@@ -158,6 +194,24 @@ func setConfigValue(cmd *cobra.Command, args []string, app *pkg.AppContainer) er
 		config.Variant = value
 	case "account":
 		config.Account = value
+	case "host_docker":
+		if value == "true" || value == "1" || value == "on" {
+			config.HostDocker = true
+		} else {
+			config.HostDocker = false
+		}
+	case "host_docker_timeout":
+		config.HostDockerTimeout = value
+	case "ssh_agent":
+		if value == "true" || value == "1" || value == "on" {
+			config.SSHAgent = true
+		} else {
+			config.SSHAgent = false
+		}
+	case "ssh_agent_socket":
+		config.SSHAgentSocket = value
+	case "project_path":
+		config.ProjectPath = value
 	case "session_persistence":
 		if value == "true" || value == "1" || value == "on" {
 			config.SessionPersistence = true
