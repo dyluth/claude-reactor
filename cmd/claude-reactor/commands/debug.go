@@ -109,7 +109,7 @@ claude-reactor info cache info`,
 						cmd.Printf("Docker Connection: ✅ Connected\n")
 					}
 				}
-				
+
 				return nil
 			},
 		},
@@ -150,7 +150,7 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 					cmd.Printf("❌ Validation failed: %v\n", err)
 					return err
 				}
-				
+
 				cmd.Printf("\n=== Image Validation Results ===\n")
 				cmd.Printf("Image: %s\n", imageName)
 				cmd.Printf("Digest: %s\n", result.Digest)
@@ -160,21 +160,21 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 				cmd.Printf("Compatible: %t\n", result.Compatible)
 				cmd.Printf("Has Claude CLI: %t\n", result.HasClaude)
 				cmd.Printf("Is Linux: %t\n", result.IsLinux)
-				
+
 				if len(result.Warnings) > 0 {
 					cmd.Printf("\n⚠️ Warnings:\n")
 					for _, warning := range result.Warnings {
 						cmd.Printf("  - %s\n", warning)
 					}
 				}
-				
+
 				if len(result.Errors) > 0 {
 					cmd.Printf("\n❌ Errors:\n")
 					for _, errMsg := range result.Errors {
 						cmd.Printf("  - %s\n", errMsg)
 					}
 				}
-				
+
 				// Show package analysis if available
 				if packages, ok := result.Metadata["packages"].(map[string]interface{}); ok {
 					cmd.Printf("\n📦 Package Analysis:\n")
@@ -190,70 +190,40 @@ claude-reactor debug image ghcr.io/user/project:latest`,
 						}
 					}
 				}
-				
+
 				if result.Compatible {
 					cmd.Printf("\n✅ Image is compatible with claude-reactor!\n")
 				} else {
 					cmd.Printf("\n❌ Image is not compatible. See errors above.\n")
 				}
-				
+
 				return nil
 			},
 		},
 	)
-	
-	// Create cache subcommand with subcommands
+
+	// Create cache subcommand
 	cacheCmd := &cobra.Command{
 		Use:   "cache",
-		Short: "Manage image validation cache",
-		Long:  "View cache statistics and clear cached validation results.",
-	}
-	
-	cacheCmd.AddCommand(
-		&cobra.Command{
-			Use:   "info",
-			Short: "Show cache statistics",
-			Long:  "Display information about cached image validation results.",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				// Handle help case when app is nil
-				if app == nil {
-					return cmd.Help()
-				}
-				// This would require implementing cache info functionality
-				// For now, just show a placeholder
-				cmd.Printf("Cache directory: ~/.claude-reactor/image-cache/\n")
-				cmd.Printf("Cache duration: 30+ days (based on image digest)\n")
-				cmd.Printf("Use 'claude-reactor debug cache clear' to clear cache\n")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "clear",
-			Short: "Clear validation cache",
-			Long:  "Remove all cached image validation results, forcing re-validation on next use.",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				// Handle help case when app is nil
-				if app == nil {
-					return cmd.Help()
-				}
-				// Ensure Docker components are initialized
-				if err := reactor.EnsureDockerComponents(app); err != nil {
-					cmd.Printf("❌ Docker not available: %v\n", err)
-					return err
-				}
+		Short: "Show validation cache statistics",
+		Long:  "Display information about cached image validation results.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle help case when app is nil
+			if app == nil {
+				return cmd.Help()
+			}
 
-				err := app.ImageValidator.ClearCache()
-				if err != nil {
-					cmd.Printf("❌ Failed to clear cache: %v\n", err)
-					return err
-				}
-				cmd.Printf("✅ Image validation cache cleared successfully\n")
-				return nil
-			},
+			// Start checking cache info
+			// For now, just show a placeholder as per previous implementation
+			// In a real implementation, we would query the ImageValidator for stats
+			cmd.Printf("Cache directory: ~/.claude-reactor/image-cache/\n")
+			cmd.Printf("Cache duration: 30+ days (based on image digest)\n")
+			cmd.Printf("To clear cache, use: claude-reactor clean --cache\n")
+			return nil
 		},
-	)
-	
+	}
+
 	infoCmd.AddCommand(cacheCmd)
-	
+
 	return infoCmd
 }

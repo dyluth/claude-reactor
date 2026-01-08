@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"claude-reactor/cmd/claude-reactor/commands"
 	"claude-reactor/internal/reactor"
+	"claude-reactor/internal/reactor/logging"
 	"claude-reactor/pkg"
 )
 
@@ -44,7 +46,11 @@ func Execute() error {
 	tempCmd.PersistentFlags().Bool("debug", false, "Enable debug mode")
 	tempCmd.PersistentFlags().Bool("verbose", false, "Enable verbose output")
 	tempCmd.PersistentFlags().String("log-level", "info", "Set log level")
-	tempCmd.ParseFlags(os.Args[1:])
+	tempCmd.PersistentFlags().Bool("version", false, "Print version information")
+	tempCmd.SilenceErrors = true
+	tempCmd.SilenceUsage = true
+	// Ignore errors here as we might have other flags not defined in tempCmd
+	_ = tempCmd.ParseFlags(os.Args[1:])
 
 	debug, _ := tempCmd.PersistentFlags().GetBool("debug")
 	verbose, _ := tempCmd.PersistentFlags().GetBool("verbose")
@@ -61,8 +67,6 @@ func Execute() error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-
-
 func newRootCmd(app *pkg.AppContainer) *cobra.Command {
 	var rootCmd = &cobra.Command{
 		Use:   "claude-reactor",
@@ -71,9 +75,28 @@ func newRootCmd(app *pkg.AppContainer) *cobra.Command {
 with proper account isolation. It offers multiple pre-built container variants
 for different development needs while maintaining security and simplicity.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildDate),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if app != nil {
+				// Re-sync logger flags if they changed (e.g. from command line specific overrides)
+				debug, _ := cmd.Flags().GetBool("debug")
+				verbose, _ := cmd.Flags().GetBool("verbose")
+				logLevel, _ := cmd.Flags().GetString("log-level")
+
+				// Only update if different to avoid overhead
+				if debug != app.Debug {
+					app.Logger = logging.NewLoggerWithFlags(debug, verbose, logLevel)
+					app.Debug = debug
+					// Update config manager logger
+					if app.ConfigMgr != nil {
+						// We can't easily swap logger in existing manager without interface change/method
+						// But for now, app.Logger is the source of truth for new components
+					}
+				}
+			}
+			return nil
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			// Handle deprecated flags with clear migration guidance
-
 			if listVariants, _ := cmd.Flags().GetBool("list-variants"); listVariants {
 				fmt.Fprintf(os.Stderr, "❌ The --list-variants flag has been removed. Use:\n")
 				fmt.Fprintf(os.Stderr, "   claude-reactor info\n")
@@ -93,16 +116,18 @@ for different development needs while maintaining security and simplicity.`,
 			}
 
 			// Default action - if config exists, run; otherwise show help
-			config, err := app.ConfigMgr.LoadConfig()
-			if err == nil && (config.Variant != "" || config.Account != "") {
-				// Configuration exists, default to run command
-				app.Logger.Info("🚀 Found existing configuration, running container...")
-				runCmd := commands.NewRunCmd(app)
-				if runErr := runCmd.RunE(cmd, args); runErr != nil {
-					cmd.PrintErrf("Run failed: %v\n", runErr)
-					os.Exit(1)
+			if app != nil {
+				config, err := app.ConfigMgr.LoadConfig()
+				if err == nil && (config.Variant != "" || config.Account != "") {
+					// Configuration exists, default to run command
+					app.Logger.Info("🚀 Found existing configuration, running container...")
+					runCmd := commands.NewRunCmd(app)
+					if runErr := runCmd.RunE(cmd, args); runErr != nil {
+						cmd.PrintErrf("Run failed: %v\n", runErr)
+						os.Exit(1)
+					}
+					return
 				}
-				return
 			}
 
 			// No configuration found, show help
@@ -111,9 +136,9 @@ for different development needs while maintaining security and simplicity.`,
 	}
 
 	// Global flags
+	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug mode")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().String("log-level", "info", "Set log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug mode")
 
 	// Deprecated flags (hidden, show clear migration error)
 	rootCmd.Flags().Bool("list-variants", false, "Removed: use 'debug info'")
@@ -122,6 +147,20 @@ for different development needs while maintaining security and simplicity.`,
 	rootCmd.Flags().MarkHidden("list-variants")
 	rootCmd.Flags().MarkHidden("show-config")
 	rootCmd.Flags().MarkHidden("variant")
+
+	// Version command
+	var versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("claude-reactor version %s\n", Version)
+			fmt.Printf("Git commit: %s\n", GitCommit)
+			fmt.Printf("Build date: %s\n", BuildDate)
+			fmt.Printf("Go version: %s\n", runtime.Version())
+			fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		},
+	}
+	rootCmd.AddCommand(versionCmd)
 
 	// Set version information for commands that need it
 	commands.SetVersionInfo(Version, GitCommit, BuildDate)
@@ -140,7 +179,7 @@ for different development needs while maintaining security and simplicity.`,
 }
 
 // showEnhancedConfig displays comprehensive configuration information (Phase 0.4)
-func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error { //TODO CLAUDE:  is this fiunction unused? shoould we be using it?
+func showEnhancedConfig(cmd *cobra.Command, app *pkg.AppContainer) error {
 	// Parse flags
 	showRaw, _ := cmd.Flags().GetBool("raw")
 	verbose, _ := cmd.Flags().GetBool("verbose")

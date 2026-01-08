@@ -274,7 +274,7 @@ build-reactor: go-mod-tidy ## Build claude-reactor binaries for all major archit
 build-apps: build-reactor ## Build all applications (binaries in dist/)
 
 .PHONY: install
-install: ## Install claude-reactor to system PATH using INSTALL script
+install: build-local ## Install claude-reactor to system PATH using INSTALL script
 	@echo "$(BLUE)Installing claude-reactor to system PATH...$(NC)"
 	@./INSTALL
 

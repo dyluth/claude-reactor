@@ -144,6 +144,12 @@ copy_binary() {
             spctl --add "$destination" 2>/dev/null || true
             log_info "✅ Added to Gatekeeper whitelist"
         fi
+
+        # Force ad-hoc signing (fixes Killed: 9 on Apple Silicon)
+        if command -v codesign >/dev/null 2>&1; then
+            codesign --force --deep --sign - "$destination" 2>/dev/null || true
+            log_info "✅ Ad-hoc signing applied"
+        fi
         
         log_warning "⚠️  macOS may still block unsigned binaries"
         log_info "If you get 'Killed: 9' errors, use the local install option:"
