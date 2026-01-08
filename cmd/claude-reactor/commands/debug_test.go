@@ -11,7 +11,7 @@ func TestSetVersionInfo(t *testing.T) {
 	t.Run("set version info", func(t *testing.T) {
 		// Test that SetVersionInfo doesn't panic
 		SetVersionInfo("v1.0.0", "abc123", "2024-01-01")
-		
+
 		// The function just sets global variables, so we can't easily assert the values
 		// but we can ensure it doesn't panic
 		assert.True(t, true) // This test just ensures no panic
@@ -32,7 +32,7 @@ func TestNewInfoCmd(t *testing.T) {
 	t.Run("info command creation", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		// Check basic properties
 		assert.Equal(t, "info", cmd.Use)
 		assert.Contains(t, cmd.Short, "information")
@@ -44,13 +44,13 @@ func TestInfoSubcommands(t *testing.T) {
 	t.Run("info has expected subcommands", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		subcommands := cmd.Commands()
 		subcommandNames := make([]string, len(subcommands))
 		for i, subcmd := range subcommands {
 			subcommandNames[i] = subcmd.Use
 		}
-		
+
 		assert.Contains(t, subcommandNames, "status")
 		assert.Contains(t, subcommandNames, "info")
 		assert.Contains(t, subcommandNames, "image [image-name]")
@@ -62,7 +62,7 @@ func TestInfoStatusSubcommand(t *testing.T) {
 	t.Run("info status with nil app shows help", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		// Find the status subcommand
 		var statusCmd *cobra.Command
 		for _, subcmd := range cmd.Commands() {
@@ -71,7 +71,7 @@ func TestInfoStatusSubcommand(t *testing.T) {
 				break
 			}
 		}
-		
+
 		assert.NotNil(t, statusCmd)
 		assert.Equal(t, "status", statusCmd.Use)
 		assert.Contains(t, statusCmd.Short, "debug status")
@@ -82,7 +82,7 @@ func TestInfoImageSubcommand(t *testing.T) {
 	t.Run("info image requires one argument", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		// Find the image subcommand
 		var imageCmd *cobra.Command
 		for _, subcmd := range cmd.Commands() {
@@ -91,7 +91,7 @@ func TestInfoImageSubcommand(t *testing.T) {
 				break
 			}
 		}
-		
+
 		assert.NotNil(t, imageCmd)
 		assert.Contains(t, imageCmd.Short, "image compatibility")
 		// The Args should be ExactArgs(1) but we can't easily test the function reference
@@ -99,10 +99,10 @@ func TestInfoImageSubcommand(t *testing.T) {
 }
 
 func TestInfoCacheSubcommand(t *testing.T) {
-	t.Run("info cache has subcommands", func(t *testing.T) {
+	t.Run("info cache is leaf command", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		// Find the cache subcommand
 		var cacheCmd *cobra.Command
 		for _, subcmd := range cmd.Commands() {
@@ -111,19 +111,11 @@ func TestInfoCacheSubcommand(t *testing.T) {
 				break
 			}
 		}
-		
+
 		assert.NotNil(t, cacheCmd)
-		assert.True(t, cacheCmd.HasSubCommands())
-		
-		// Check cache subcommands
-		cacheSubcommands := cacheCmd.Commands()
-		cacheSubcommandNames := make([]string, len(cacheSubcommands))
-		for i, subcmd := range cacheSubcommands {
-			cacheSubcommandNames[i] = subcmd.Use
-		}
-		
-		assert.Contains(t, cacheSubcommandNames, "info")
-		assert.Contains(t, cacheSubcommandNames, "clear")
+
+		assert.NotNil(t, cacheCmd)
+		assert.False(t, cacheCmd.HasSubCommands())
 	})
 }
 
@@ -131,12 +123,12 @@ func TestDebugCommandStructure(t *testing.T) {
 	t.Run("debug command has proper examples", func(t *testing.T) {
 		app := createMockApp()
 		cmd := NewInfoCmd(app)
-		
+
 		// Check examples are present in the full command help
 		assert.Contains(t, cmd.Example, "# Show system information")
 		assert.Contains(t, cmd.Example, "# Test custom image compatibility")
 		assert.Contains(t, cmd.Example, "# Clear validation cache")
-		
+
 		// Check command structure
 		assert.True(t, cmd.HasSubCommands())
 		assert.Equal(t, "info", cmd.Use)
